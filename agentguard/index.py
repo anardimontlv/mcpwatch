@@ -228,7 +228,7 @@ def g(grade):
     return f'<span class="g g{grade}">{grade}</span>'
 
 
-BASE = os.environ.get("AG_BASE_URL", "https://agentguard.vercel.app").rstrip("/")
+BASE = os.environ.get("AG_BASE_URL", "https://agentguard-pi.vercel.app").rstrip("/")
 GRADE_ORDER = "FDCBA"
 
 
