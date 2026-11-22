@@ -1,0 +1,35 @@
+name: pages
+# Re-render the site from the latest published data: no registry fetch, no probes (~1 min).
+on:
+  push:
+    branches: [main]
+    paths: ["mcpwatch/index.py", "mcpwatch/scan.py", "mcpwatch/webscan.py", "web/**", "api/**", "vercel.json"]
+  workflow_dispatch:
+permissions: { contents: write }
+concurrency: { group: publish, cancel-in-progress: false }
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m unittest -q
+      - name: fetch the published site
+        run: |
+          mkdir -p live
+          git fetch -q origin site
+          git archive origin/site site | tar -x -C live
+      - run: python -m mcpwatch.index --render-from live/site --out site
+        env: { MCPWATCH_LEGAL_ENTITY: "Amir Nardimon, Israeli sole proprietor, HaHarchava 25, Herut 4069100, Israel" }
+      - name: publish to the site branch (Vercel deploys it)
+        env: { GH_TOKEN: "${{ github.token }}", REPO: "${{ github.repository }}" }
+        run: |
+          mkdir -p /tmp/pub && cp -r site api vercel.json /tmp/pub/
+          cd /tmp/pub
+          git init -q -b site
+          git config user.name "mcpwatch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -q -m "pages $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" site

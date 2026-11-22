@@ -115,11 +115,13 @@ def diff(prev, cur):
         add("auth_dropped", "endpoint stopped requiring credentials")
     elif pa == "open" and ca == "auth":
         add("auth_added", "endpoint now requires credentials")
-    if prev.get("g") and cur.get("g") and prev["g"] != cur["g"]:
-        add("grade_changed", f"{prev['g']} -> {cur['g']}")
     for k in sorted(set(prev.get("p") or {}) & set(cur.get("p") or {})):
         if prev["p"][k] != cur["p"][k]:
             add("package_changed", f"{k} {prev['p'][k]} -> {cur['p'][k]}")
+    # a grade change with nothing observable changed means OUR rules changed, not the server: never report that as
+    # drift (it would fail every customer's CI on a rules release and mislabel servers on the public radar)
+    if prev.get("g") and cur.get("g") and prev["g"] != cur["g"] and out:
+        add("grade_changed", f"{prev['g']} -> {cur['g']}")
     return out
 
 

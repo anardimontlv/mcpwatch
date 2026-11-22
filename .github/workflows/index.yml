@@ -1,12 +1,14 @@
 name: daily index
-on:
+on:  # the full scan (registry + probes, ~20 min) runs daily; pushes only re-render pages (pages.yml)
   schedule: [{ cron: "17 4 * * *" }]
   workflow_dispatch:
-  push:  # only files the published site is built from
-    branches: [main]
-    paths: ["mcpwatch/index.py", "mcpwatch/scan.py", "mcpwatch/watch.py", "mcpwatch/webscan.py", "web/**", "api/**", "vercel.json"]
+    inputs:
+      baseline:
+        description: "Reset the radar baseline (after probe/rule logic changes): rescan without diffing and drop today's change file"
+        type: boolean
+        default: false
 permissions: { contents: write }
-concurrency: { group: index, cancel-in-progress: true }
+concurrency: { group: publish, cancel-in-progress: false }  # shared with pages.yml: never two publishers at once
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,8 +25,17 @@ jobs:
           git fetch -q origin site && git archive origin/site site/d | tar -x -C prev || echo "no previous site: baseline run"
           git clone -q --depth 1 --branch history --single-branch "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" hist \
             || { mkdir -p hist && git -C hist init -q -b history && git -C hist remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"; }
-      - run: python -m mcpwatch.index --out site --prev prev/site/d --history hist
-        env: { MCPWATCH_LEGAL_ENTITY: "Amir Nardimon, Israeli sole proprietor, HaHarchava 25, Herut 4069100, Israel" }
+      - name: index
+        env:
+          BASELINE: "${{ inputs.baseline }}"
+          MCPWATCH_LEGAL_ENTITY: "Amir Nardimon, Israeli sole proprietor, HaHarchava 25, Herut 4069100, Israel"
+        run: |
+          if [ "$BASELINE" = "true" ]; then
+            rm -f "hist/$(date -u +%F).json"
+            python -m mcpwatch.index --out site --history hist
+          else
+            python -m mcpwatch.index --out site --prev prev/site/d --history hist
+          fi
       - name: sanity-check output before publishing
         run: |
           python - <<'PY'

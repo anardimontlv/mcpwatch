@@ -185,7 +185,8 @@ def _probe(url):
         _close(url, sid)
         return "open", tools if isinstance(tools, list) else []
     except urllib.error.HTTPError as e:
-        return ("auth" if e.code in (401, 403) else "down"), []
+        # only 401 means "auth required" (MCP spec); 403 is usually a firewall/rate limit: unknown, not auth
+        return ("auth" if e.code == 401 else "down"), []
     except Exception:
         return "down", []
 
@@ -212,7 +213,8 @@ def assess(s, do_probe=True):
     lst = lambda v: [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []  # registry data is untrusted
     name, findings, notes, tools = str(s.get("name") or "unnamed"), [], [], []
     auth = "none"  # none: no probeable remote; open/auth/down: first definitive probe result wins
-    for r in lst(s.get("remotes"))[:3]:  # cap per-server probe work
+    # sorted: registry order can change between runs and must not change which endpoints/tools we fingerprint
+    for r in sorted(lst(s.get("remotes")), key=lambda r: str(r.get("url", "")))[:3]:  # cap per-server probe work
         url = r.get("url") if isinstance(r.get("url"), str) else ""
         hdrs = {str(h.get("name", "")): h.get("value", "") for h in lst(r.get("headers"))}
         cfg = {"url": url, "headers": hdrs}
@@ -224,14 +226,15 @@ def assess(s, do_probe=True):
             notes.append(f"{safe_url(url)}: not probed (owner opt-out)")
         elif do_probe and "{" not in url and url.startswith("http"):
             status, t = probe(url)
-            if auth in ("none", "down"):
-                auth = status
+            # order-independent: any open endpoint makes the server open; otherwise auth beats down
+            auth = max(auth, status, key=["none", "down", "auth", "open"].index)
             notes.append(f"{safe_url(url)}: {'requires auth' if status == 'auth' else 'answers without auth' if status == 'open' else 'not reachable'}")
             if status == "open" and t:
                 findings.append({"server": name, "rule": "MW005", "severity": "low",
                                  "message": f"Remote endpoint lists {len(t)} tool(s) to anyone, no credentials needed."})
-                tools = t
-                findings += scan_tools(t, name)
+                if not tools:  # first open endpoint (in sorted order) defines the fingerprints
+                    tools = t
+                    findings += scan_tools(t, name)
     pk = {}
     for p in lst(s.get("packages")):
         ident, ver = str(p.get("identifier", "")), str(p.get("version", ""))
@@ -251,7 +254,7 @@ def assess(s, do_probe=True):
             "notes": notes, "tools": [str(t.get("name", "?")) for t in lst(tools)][:100],
             "auth": auth, "fp": fingerprints(lst(tools)) if auth == "open" else None, "pk": pk,
             "verified": datetime.now(timezone.utc).strftime("%Y-%m-%d") if auth == "open" else None,
-            "keys": registry_keys(s), "tool_text": {str(t.get("name", "?")): str(t.get("description", ""))[:300] for t in lst(tools)}}
+            "keys": registry_keys(s), "tool_text": {str(t.get("name", "?")): str(t.get("description", ""))[:4000] for t in lst(tools)}}
 
 
 def slug(name):
@@ -391,13 +394,19 @@ m.replaceChildren(...top,k,c,b)})
 CHANGES_JS = """
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
 const box=document.getElementById('c');
+const row=it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
+(it.notable||[]).forEach(w=>cs.append($('span',w,'tag')));
+it.changes.forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);return li};
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
 if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
-days.forEach(d=>{const s=$('section'),ul=$('ul',null,'feed'),n=d.items.length;s.append($('h2',d.date+' · '+n+' server'+(n===1?'':'s')+' changed'));
-if(!n)s.append($('p','No tool changes detected.','mut'));
-d.items.slice(0,200).forEach(it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
-it.changes.forEach(c=>{const t=$('span',null,'tag');if(c.sev==='high')t.append($('b','High: '));t.append(c.kind.replace(/_/g,' ')+' '+c.detail);cs.append(t)});
-li.append(a,cs);ul.append(li)});s.append(ul);box.append(s)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
+days.forEach(d=>{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
+s.append($('h2',d.date));
+const h=$('h3',hot.length?hot.length+' notable change'+(hot.length===1?'':'s'):'No notable changes');s.append(h);
+if(hot.length){const ul=$('ul',null,'feed');hot.slice(0,200).forEach(i=>ul.append(row(i)));s.append(ul)}
+else s.append($('p','Nothing matched our checks for dropped auth, falling grades or suspicious tool text.','mut'));
+if(rest.length){const det=$('details'),sm=$('summary',rest.length+' routine update'+(rest.length===1?'':'s')+' (reworded descriptions, new or removed tools)');
+const ul=$('ul',null,'feed');rest.slice(0,300).forEach(i=>ul.append(row(i)));det.append(sm,ul);s.append(det)}
+box.append(s)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
 SEARCH_JS = """
@@ -562,10 +571,62 @@ def track_changes(results, prev, today=None):
         cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"]}
         ch = diff(old, cur)
         if ch:
-            text = {c["detail"]: r["tool_text"].get(c["detail"], "") for c in ch if c["kind"] in ("tool_changed", "tool_added")}
-            items.append({"slug": slug(r["name"]), "name": r["name"], "changes": ch, "new_text": text})
-    items.sort(key=lambda x: -sum(c["sev"] == "high" for c in x["changes"]))
+            full = {c["detail"]: r["tool_text"].get(c["detail"], "") for c in ch if c["kind"] in ("tool_changed", "tool_added")}
+            why = notable_reasons(ch, full)
+            items.append({"slug": slug(r["name"]), "name": r["name"], "changes": ch, "notable": why,
+                          "new_text": {k: v[:300] for k, v in full.items()}})
+    items.sort(key=lambda x: (not x["notable"], -sum(c["sev"] == "high" for c in x["changes"])))
     return items
+
+
+def notable_reasons(changes, new_text):
+    """Why a change matters beyond a routine update. Empty list = routine (rewording, new features)."""
+    why = []
+    if any(c["kind"] == "auth_dropped" for c in changes):
+        why.append("endpoint stopped requiring credentials")
+    for c in changes:
+        if c["kind"] == "grade_changed" and re.fullmatch(r"[A-F] -> [A-F]", c["detail"]) and c["detail"][-1] > c["detail"][0]:
+            why.append(f"grade dropped ({c['detail']})")
+    added = {c["detail"] for c in changes if c["kind"] == "tool_added"}
+    for f in scan_tools([{"name": n, "description": t} for n, t in new_text.items()], "radar"):
+        if f["rule"] in ("MW101", "MW103"):
+            why.append("new tool text matches a tool-poisoning pattern" if f["rule"] == "MW101" else "new tool text contains invisible characters")
+        elif f["rule"] == "MW102" and any(n in f["message"] for n in added):
+            why.append("a newly added tool can execute commands or delete data")
+    return sorted(set(why))
+
+
+def results_from_site(d):
+    """Rebuild render inputs from a published site's d/ shards (render-only mode: no registry fetch, no probes)."""
+    out = []
+    for name, rec in sorted(load_prev(os.path.join(d, "d")).items()):
+        out.append({"name": rec.get("n", name), "title": rec.get("t", ""), "description": rec.get("d", ""), "version": rec.get("v", ""),
+                    "repo": rec.get("r", ""), "score": rec.get("s", 100), "grade": rec.get("g", "A"),
+                    "findings": [{"server": rec.get("n", name), "severity": f[0], "rule": f[1], "message": f[2]} for f in rec.get("f", [])],
+                    "notes": rec.get("o", []), "tools": rec.get("k", []), "fp": rec.get("h"), "auth": rec.get("a"), "pk": rec.get("p", {}),
+                    "verified": rec.get("vd"), "keys": [], "tool_text": {}})
+    return out
+
+
+def render_only(src, out):
+    import shutil
+    results = results_from_site(src)
+    if len(results) < 1000:  # a missing/broken source must not wipe the public site
+        sys.exit(f"render-only: only {len(results)} records in {src}; refusing to publish")
+    try:
+        with open(os.path.join(src, "changes.json"), encoding="utf-8") as fh:
+            changes = json.load(fh)
+    except (OSError, ValueError):
+        changes = []
+    for day in changes:  # items recorded before notability / the grade-only rule existed
+        day["items"] = [it for it in day.get("items", []) if any(c.get("kind") != "grade_changed" for c in it.get("changes", []))]
+        for it in day["items"]:
+            if "notable" not in it:
+                it["notable"] = notable_reasons(it.get("changes", []), it.get("new_text", {}))
+    write_site(results, out, changes)
+    shutil.rmtree(os.path.join(out, "m"), ignore_errors=True)  # lookup keys aren't in d/: keep the published ones
+    shutil.copytree(os.path.join(src, "m"), os.path.join(out, "m"))
+    print(f"rendered {len(results)} servers from {src} into {out}/", file=sys.stderr)
 
 
 def main(argv=None):
@@ -575,7 +636,10 @@ def main(argv=None):
     ap.add_argument("--no-probe", action="store_true")
     ap.add_argument("--prev", help="previous site's d/ shard dir, for change detection")
     ap.add_argument("--history", help="dir of daily change files (the history branch checkout)")
+    ap.add_argument("--render-from", help="re-render pages from a published site dir (no registry fetch, no probes)")
     a = ap.parse_args(argv)
+    if a.render_from:
+        return render_only(a.render_from, a.out)
     servers = fetch_registry(a.limit)
     print(f"registry: {len(servers)} active servers", file=sys.stderr)
     with ThreadPoolExecutor(48) as ex:
