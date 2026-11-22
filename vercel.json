@@ -9,7 +9,7 @@
   ],
   "rewrites": [
     { "source": "/badge/:slug.svg", "destination": "/api/badge?slug=:slug" },
-    { "source": "/s/:slug", "destination": "/s.html" }
+    { "source": "/s/:slug", "destination": "/s" }
   ],
   "headers": [
     {

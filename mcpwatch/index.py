@@ -332,7 +332,7 @@ def page(title, body, desc, noindex=False):
             + ('<meta name="robots" content="noindex">' if noindex else '') +
             f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}"><style>{CSS}</style></head>'
             f'<body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="in"><a class="brand" href="/">{LOGO}mcpwatch</a>'
-            f'<nav aria-label="Main"><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}#quickstart">Docs</a><a href="{GH}">GitHub</a></nav></div></header>'
+            f'<nav aria-label="Main"><a href="/scan">Scan</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}#quickstart">Docs</a><a href="{GH}">GitHub</a></nav></div></header>'
             f'<main id="main">{body}</main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety. Servers listed here are third-party projects from the public MCP registry; mcpwatch does not sell, operate or endorse them. mcpwatch sells one product: developer security monitoring (<a href="/pricing">pricing</a>).</p>'
             f'<nav aria-label="Footer"><a href="/">Index</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}">GitHub</a>'
             f'<a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/refunds">Refunds</a></nav></div></footer></body></html>')
@@ -396,8 +396,9 @@ CHANGES_JS = """
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
 const box=document.getElementById('c');
 const row=it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
-(it.notable||[]).forEach(w=>cs.append($('span',w,'tag')));
-it.changes.forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);return li};
+const nb=it.notable||[];nb.forEach(w=>cs.append($('span',w,'tag')));
+const covered=k=>(k==='auth_dropped'&&nb.some(w=>w.includes('credentials')))||(k==='grade_changed'&&nb.some(w=>w.startsWith('grade dropped')));
+it.changes.filter(c=>!covered(c.kind)).forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);return li};
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
 if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
 days.forEach(d=>{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
@@ -464,7 +465,7 @@ def write_site(results, out, changes=None):
         json.dump(changes or [], fh, separators=(",", ":"))
     with open(f"{out}/changes.html", "w", encoding="utf-8") as fh:
         fh.write(page("MCP rug-pull radar: tool changes across every public MCP server",
-                      "<div class='hero'><span class='eye'>Updated daily</span><h1>Rug-pull radar</h1><p class='lede'>Every public MCP server is fingerprinted daily. "
+                      "<div class='hero'><span class='eye'>Updated daily</span><h1>Rug-pull radar</h1><p class='lede'>Every remote MCP server that lists its tools publicly is fingerprinted daily. "
                       "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p></div>"
                       "<div id='c'><p class='mut'>Loading…</p></div>" f"<script>{CHANGES_JS}</script>",
                       "Daily feed of MCP tool changes across every server in the official registry."))
