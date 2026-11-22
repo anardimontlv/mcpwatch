@@ -70,13 +70,15 @@ class HidingTest(unittest.TestCase):
             return watch.main(["check", cfg, "--lock", lock, "--max-stale", max_stale])
 
     def test_server_going_dark_eventually_fails(self):
-        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "v": "2026-01-01"}
-        today = __import__("datetime").date.today().isoformat()
-        self.assertEqual(self._check(locked, {**locked, "a": "down", "v": today}), 0)  # fresh: carried fingerprints ok
-        self.assertEqual(self._check(locked, {**locked, "a": "down", "v": "2026-01-01"}), 1)  # stale: fail
+        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "vd": "2026-01-01"}
+        today = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).date().isoformat()
+        self.assertEqual(self._check(locked, {**locked, "a": "down", "vd": today}), 0)  # fresh: carried fingerprints ok
+        for bad in ("2026-01-01", "9.9.9", "2999-01-01", None, "garbage"):  # old, a version string, future, missing
+            self.assertEqual(self._check(locked, {**locked, "a": "down", "vd": bad}), 1, bad)
 
     def test_reassigned_slug_fails(self):
-        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "v": "2999-01-01"}
+        today = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).date().isoformat()
+        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "vd": today}
         self.assertEqual(self._check(locked, {**locked, "slug": "evil-2"}), 1)
 
 
@@ -99,9 +101,18 @@ class TrackTest(unittest.TestCase):
         from mcpwatch.index import track_changes, slug
         r = {"name": "x", "fp": None, "auth": "down", "grade": "A", "pk": {}, "tool_text": {}}
         prev = {slug("x"): {"h": {"t": "aaa"}, "a": "open", "g": "A", "p": {}}}
-        self.assertEqual(track_changes([r], {k: {**v, "v": "2026-01-01"} for k, v in prev.items()}), [])
+        self.assertEqual(track_changes([r], {k: {**v, "vd": "2026-01-01", "v": "9.9.9"} for k, v in prev.items()}), [])
         self.assertEqual(r["fp"], {"t": "aaa"})  # carried forward for tomorrow's diff
         self.assertEqual(r["verified"], "2026-01-01")  # but not re-verified: clients can fail on staleness
+        r2 = {"name": "x", "fp": None, "auth": "down", "grade": "A", "pk": {}, "tool_text": {}}
+        track_changes([r2], {k: {**v, "vd": "2999-01-01"} for k, v in prev.items()})
+        self.assertIsNone(r2["verified"])  # a future date is never carried forward
+
+    def test_version_survives_in_record(self):
+        from mcpwatch.index import compact
+        r = {"name": "x", "title": "x", "description": "", "version": "1.2.3", "repo": "", "score": 100, "grade": "A",
+             "findings": [], "notes": [], "tools": [], "fp": None, "auth": "none", "pk": {}, "verified": None}
+        self.assertEqual(compact(r)["v"], "1.2.3")
 
 
 class LockCheckEndToEnd(unittest.TestCase):

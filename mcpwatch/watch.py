@@ -122,6 +122,16 @@ def diff(prev, cur):
 
 # ---- CLI ----
 
+def fresh(vd, max_days):
+    """True only for a parseable, non-future date within max_days. Anything else is stale (fail closed)."""
+    import datetime
+    try:
+        d = datetime.date.fromisoformat(str(vd))
+    except ValueError:
+        return False
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    return today - datetime.timedelta(days=max_days) <= d <= today
+
 def fetch(path):
     req = urllib.request.Request(f"{BASE}/{path}", headers={"User-Agent": "mcpwatch-cli/0.1"})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -166,7 +176,7 @@ def snapshot(servers):
             out[name] = {"slug": None, "ambiguous": str(e)}
             continue
         out[name] = {"slug": sl, "name": rec.get("n"), "h": rec.get("h"), "a": rec.get("a"), "g": rec.get("g"), "p": rec.get("p"),
-                     "v": rec.get("v")} if rec else {"slug": None}
+                     "vd": rec.get("vd")} if rec else {"slug": None}
     return out
 
 
@@ -208,8 +218,6 @@ def main(argv=None):
     except (OSError, ValueError) as e:
         print(f"mcpwatch: cannot read lock file ({e}); run `lock` first", file=sys.stderr)
         return 2
-    import datetime
-    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=a.max_stale)).strftime("%Y-%m-%d")
     drift = 0
     for name, cur in now.items():
         prev = locked.get(name)
@@ -226,8 +234,8 @@ def main(argv=None):
             drift += 1
             continue
         # a server that hides from the indexer (blocks us, goes "down") must not keep passing on old fingerprints
-        if prev.get("h") and (cur.get("v") or "") < cutoff:
-            print(f"  [MEDIUM  ] {name}: stale: tools last verified {cur.get('v') or 'never'}, older than {a.max_stale} day(s)")
+        if prev.get("h") and not fresh(cur.get("vd"), a.max_stale):
+            print(f"  [MEDIUM  ] {name}: stale: tools last verified {cur.get('vd') or 'never'}, not within {a.max_stale} day(s)")
             drift += 1
         for c in diff(prev, cur):
             print(f"  [{c['sev'].upper():8}] {name}: {c['kind']} {c['detail']}")

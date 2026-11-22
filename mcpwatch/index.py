@@ -230,7 +230,7 @@ def page(title, body, desc):
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><style>{CSS}</style></head>'
             f'<body><main>{body}<p class="mut" style="margin-top:48px">mcpwatch: static and read-only checks. '
-            f'A grade is not a guarantee of safety. <a href="/">Index</a> · <a href="/changes">Rug-pull radar</a> · <a href="https://github.com/anardimontlv/mcpwatch">Scanner</a></p></main></body></html>')
+            f'A grade is not a guarantee of safety. <a href="/">Index</a> · <a href="/changes">Rug-pull radar</a> · <a href="/pricing">Pricing</a> · <a href="https://github.com/anardimontlv/mcpwatch">GitHub</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a></p></main></body></html>')
 
 
 def g(grade):
@@ -238,6 +238,7 @@ def g(grade):
 
 
 BASE = os.environ.get("MCPWATCH_URL", "https://www.mcpwatch.io").rstrip("/")
+DISPUTE = "https://github.com/anardimontlv/mcpwatch/issues/new?labels=dispute&title=Dispute%3A+"
 GRADE_ORDER = "FDCBA"
 
 
@@ -251,7 +252,7 @@ def compact(r):
             "r": r["repo"] if r["repo"].startswith("https://") else "", "s": r["score"], "g": r["grade"],
             "f": [[x["severity"], x["rule"], x["message"][:300]] for x in r["findings"][:20]],
             "o": r["notes"][:6], "k": r["tools"][:30], "h": r.get("fp"), "a": r.get("auth"), "p": r.get("pk") or {},
-            "v": r.get("verified")}  # last day the fingerprints were observed live
+            "vd": r.get("verified")}  # last day the fingerprints were observed live ("v" is the version)
 
 
 SERVER_JS = """
@@ -267,7 +268,8 @@ if(!r.f.length)k.append($('p','No issues found by current checks.'));
 r.f.forEach(f=>{const p=$('p',null,'wrap');p.append($('b',f[0]+' '+f[1]+': '),f[2]);k.append(p)});
 const c=$('div',null,'card');c.append($('h2','What was checked'));r.o.forEach(o=>c.append($('p',o,'wrap')));
 c.append($('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
-const b=$('div',null,'card');b.append($('h2','Maintainer? Add the badge'),
+const b=$('div',null,'card');const dl=$('a','Dispute this grade');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
+const dp=$('p','Think a finding is wrong? ');dp.append(dl);b.append($('h2','Maintainer? Add the badge'),dp,
  $('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
 m.replaceChildren($('p',r.n+' · v'+r.v+' · score '+r.s+'/100','mut wrap'),h,$('p',r.d,'wrap'),k,c,b)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
@@ -322,6 +324,14 @@ def write_site(results, out, changes=None):
     for k, v in lookup.items():
         with open(f"{out}/m/{k}.json", "w", encoding="utf-8") as fh:
             json.dump(v, fh, separators=(",", ":"))
+    web = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+    entity = esc(os.environ.get("MCPWATCH_LEGAL_ENTITY", "the mcpwatch project"))
+    titles = {"pricing": "Pricing", "terms": "Terms of Service", "privacy": "Privacy Policy", "refunds": "Refund Policy"}
+    for name, title in titles.items():
+        with open(os.path.join(web, f"{name}.html"), encoding="utf-8") as fh:
+            body = fh.read().replace("{{LEGAL_ENTITY}}", entity)
+        with open(f"{out}/{name}.html", "w", encoding="utf-8") as fh:
+            fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}."))
     with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
         json.dump(changes or [], fh, separators=(",", ":"))
     with open(f"{out}/changes.html", "w", encoding="utf-8") as fh:
@@ -344,22 +354,27 @@ def write_site(results, out, changes=None):
                 + (f"<p class='wrap'>Source: <a rel='nofollow' href='{esc(r['repo'])}'>{esc(r['repo'])}</a></p>" if r['repo'].startswith("https://") else "")
                 + f"<div class='card'><h2>Findings</h2><table><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr>{rows}</table></div>"
                 f"<div class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></div>"
-                f"<div class='card'><h2>Maintainer? Fix, then add the badge</h2><p>Grades refresh daily.</p><pre class='wrap'>{esc(md)}</pre></div>")
+                f"<div class='card'><h2>Maintainer? Fix, then add the badge</h2><p>Grades refresh daily. "
+                f"Think a finding is wrong? <a rel='nofollow' href='{DISPUTE}{urllib.request.quote(r['name'])}'>Dispute this grade</a>.</p>"
+                f"<pre class='wrap'>{esc(md)}</pre></div>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"Is {r['title']} MCP server safe? Grade {r['grade']}", body,
                           f"mcpwatch security grade {r['grade']} for the {r['title']} MCP server: findings, auth, tools."))
     with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
         fh.write(page("MCP server security grade: mcpwatch", "<p><a href='/'>← All servers</a></p><div id='m'><p>Loading…</p></div>"
-                      f"<script>{SERVER_JS.replace('BASE', BASE)}</script>", "mcpwatch security grade for an MCP server."))
+                      f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE)}</script>", "mcpwatch security grade for an MCP server."))
 
     counts = {k: sum(r["grade"] == k for r in results) for k in "ABCDF"}
     open_n = sum(any(x["rule"] == "MW005" for x in r["findings"]) for r in results)
     worst = sorted(notable, key=lambda x: (x[1]["score"], x[1]["name"]))[:100]
     rows = "".join(f"<tr><td>{g(r['grade'])}</td><td class='wrap'><a href='/s/{sl}'>{esc(r['title'])}</a>"
                    f"<br><span class='mut'>{esc(r['name'])}</span></td><td>{len(r['findings'])}</td></tr>" for sl, r in worst)
-    body = (f"<h1>Is your AI agent's MCP server safe?</h1>"
-            f"<p>mcpwatch grades every server in the official MCP registry for leaked secrets, plain-HTTP endpoints, "
-            f"unauthenticated tools and poisoned tool descriptions. Updated daily. Last run {now}.</p>"
+    body = (f"<h1>Know when the tools your AI agents trust change.</h1>"
+            f"<p>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch fingerprints every tool "
+            f"of every server in the official MCP registry daily, grades them for leaked secrets, plain-HTTP endpoints, "
+            f"unauthenticated access and poisoned descriptions, and alerts you when something you depend on changes. "
+            f"No agent to install, no code executed, nothing leaves your machine. Last run {now}.</p>"
+            f"<p><a href='/changes'>See today's rug-pull radar →</a> · <a href='/pricing'>Pricing</a></p>"
             f"<div class='card'><b>{len(results):,}</b> servers · " + " · ".join(f"{g(k)} {v:,}" for k, v in counts.items())
             + f" · <b>{open_n:,}</b> list tools to anyone without auth</div>"
             f"<div class='card'><h2>Scan your own config, free</h2><pre>git clone https://github.com/anardimontlv/mcpwatch &amp;&amp; cd mcpwatch\n"
@@ -406,7 +421,8 @@ def track_changes(results, prev, today=None):
             continue
         if r["fp"] is None and old.get("h") and r["auth"] in ("down", "none"):
             r["fp"] = old["h"]  # unknown is not "all tools removed"
-            r["verified"] = old.get("v")
+            vd = old.get("vd")  # only a real, non-future date may be carried forward
+            r["verified"] = vd if isinstance(vd, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", vd) and vd <= today else None
         cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"]}
         ch = diff(old, cur)
         if ch:
