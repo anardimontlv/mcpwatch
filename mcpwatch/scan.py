@@ -13,6 +13,7 @@ Exit codes: 0 ok, 1 findings at/above --fail-on, 2 unreadable or unusable input.
 import argparse, json, re, shlex, sys, unicodedata
 from urllib.parse import urlsplit, parse_qsl
 
+RULES_VERSION = 2  # bump whenever rules or weights change: grade changes across versions are ours, not the server's
 SEV_WEIGHT = {"critical": 40, "high": 20, "medium": 8, "low": 3}
 SEV_ORDER = ["low", "medium", "high", "critical"]
 

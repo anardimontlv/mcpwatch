@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib, http.client, ipaddress, socket, threading
 from urllib.parse import urlsplit
-from mcpwatch.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal
+from mcpwatch.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal, RULES_VERSION
 from mcpwatch.watch import fingerprints, registry_keys, shard2, diff
 from mcpwatch.webscan import write_scan_assets
 
@@ -361,7 +361,8 @@ def compact(r):
             "r": r["repo"] if r["repo"].startswith("https://") else "", "s": r["score"], "g": r["grade"],
             "f": [[x["severity"], x["rule"], x["message"][:300]] for x in r["findings"][:20]],
             "o": r["notes"][:6], "k": r["tools"][:30], "h": r.get("fp"), "a": r.get("auth"), "p": r.get("pk") or {},
-            "vd": r.get("verified")}  # last day the fingerprints were observed live ("v" is the version)
+            "vd": r.get("verified"),  # last day the fingerprints were observed live ("v" is the version)
+            "rv": RULES_VERSION}
 
 
 SERVER_JS = """
@@ -568,7 +569,7 @@ def track_changes(results, prev, today=None):
             r["fp"] = old["h"]  # unknown is not "all tools removed"
             vd = old.get("vd")  # only a real, non-future date may be carried forward
             r["verified"] = vd if isinstance(vd, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", vd) and vd <= today else None
-        cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"]}
+        cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"], "rv": RULES_VERSION}
         ch = diff(old, cur)
         if ch:
             full = {c["detail"]: r["tool_text"].get(c["detail"], "") for c in ch if c["kind"] in ("tool_changed", "tool_added")}

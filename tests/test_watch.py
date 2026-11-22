@@ -169,12 +169,14 @@ class NotableTest(unittest.TestCase):
 
 
 class RulesChangeIsNotDriftTest(unittest.TestCase):
-    def test_grade_only_change_is_ignored(self):
-        self.assertEqual(diff({"h": {"t": "a"}, "a": "open", "g": "A"}, {"h": {"t": "a"}, "a": "open", "g": "B"}), [])
-        kinds = {c["kind"] for c in diff({"h": {"t": "a"}, "a": "open", "g": "A"}, {"h": {"t": "X"}, "a": "open", "g": "D"})}
-        self.assertEqual(kinds, {"tool_changed", "grade_changed"})
-        kinds = {c["kind"] for c in diff({"g": "A", "p": {"pkg": "1"}}, {"g": "B", "p": {"pkg": "latest"}})}
-        self.assertEqual(kinds, {"package_changed", "grade_changed"})
+    def test_grade_change_across_rules_release_is_ignored(self):
+        self.assertEqual(diff({"a": "open", "g": "A", "rv": 1}, {"a": "open", "g": "B", "rv": 2}), [])
+        self.assertEqual(diff({"a": "open", "g": "A"}, {"a": "open", "g": "B", "rv": 2}), [])  # pre-versioning record
+
+    def test_grade_change_same_rules_is_reported(self):
+        # e.g. an endpoint switched to plain HTTP in the registry: no tool/auth/package change, same rules -> real
+        kinds = {c["kind"] for c in diff({"a": "open", "g": "A", "rv": 2}, {"a": "open", "g": "C", "rv": 2})}
+        self.assertEqual(kinds, {"grade_changed"})
 
 
 class OrderIndependenceTest(unittest.TestCase):

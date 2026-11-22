@@ -118,9 +118,9 @@ def diff(prev, cur):
     for k in sorted(set(prev.get("p") or {}) & set(cur.get("p") or {})):
         if prev["p"][k] != cur["p"][k]:
             add("package_changed", f"{k} {prev['p'][k]} -> {cur['p'][k]}")
-    # a grade change with nothing observable changed means OUR rules changed, not the server: never report that as
-    # drift (it would fail every customer's CI on a rules release and mislabel servers on the public radar)
-    if prev.get("g") and cur.get("g") and prev["g"] != cur["g"] and out:
+    # a grade change across a rules release is OUR change, not the server's: never report it as drift (it would fail
+    # every customer's CI on a rules release and mislabel servers on the public radar). Same rules version: report it.
+    if prev.get("g") and cur.get("g") and prev["g"] != cur["g"] and prev.get("rv") == cur.get("rv"):
         add("grade_changed", f"{prev['g']} -> {cur['g']}")
     return out
 
@@ -181,7 +181,7 @@ def snapshot(servers):
             out[name] = {"slug": None, "ambiguous": str(e)}
             continue
         out[name] = {"slug": sl, "name": rec.get("n"), "h": rec.get("h"), "a": rec.get("a"), "g": rec.get("g"), "p": rec.get("p"),
-                     "vd": rec.get("vd")} if rec else {"slug": None}
+                     "vd": rec.get("vd"), "rv": rec.get("rv")} if rec else {"slug": None}
     return out
 
 
