@@ -19,5 +19,7 @@ jobs:
         run: |
           git config user.name "agentguard-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # runs can queue behind each other; move onto the latest main (mixed reset keeps our fresh site/ in the worktree)
+          git fetch -q origin main && git reset -q origin/main
           git add site
           git diff --cached --quiet || { git commit -q -m "index: daily refresh $(date -u +%F)" && git push; }

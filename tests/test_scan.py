@@ -124,10 +124,9 @@ class ProbeSafetyTest(unittest.TestCase):
             self.assertFalse(public_host(u), u)
         self.assertEqual(probe("http://169.254.169.254/mcp"), ("down", []))
 
-    def test_slow_drip_hits_deadline(self):
+    def _drip_server(self):
         import threading, time
-        from http.server import BaseHTTPRequestHandler, HTTPServer
-        from agentguard.index import rpc
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         class Drip(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -141,13 +140,28 @@ class ProbeSafetyTest(unittest.TestCase):
             def log_message(self, *a):
                 pass
 
-        srv = HTTPServer(("127.0.0.1", 0), Drip)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_port}/mcp"
+
+    def test_connect_time_peer_check(self):
+        # a live socket that lands on a non-public address is refused before any request bytes are sent
+        import urllib.error
+        from agentguard.index import rpc
+        with self.assertRaises(urllib.error.URLError) as cm:
+            rpc(self._drip_server(), {"jsonrpc": "2.0", "id": 1, "method": "x"})
+        self.assertIn("non-public", str(cm.exception))
+
+    def test_slow_drip_hits_deadline(self):
+        import time
+        from unittest import mock
+        from agentguard import index
+        url = self._drip_server()
         t0 = time.monotonic()
-        with self.assertRaises(TimeoutError):  # rpc() itself, bypassing public_host, to exercise the read loop
-            rpc(f"http://127.0.0.1:{srv.server_port}/mcp", {"jsonrpc": "2.0", "id": 1, "method": "x"}, deadline=time.monotonic() + 1)
+        with mock.patch.object(index, "_check_peer", lambda sock: None), self.assertRaises(TimeoutError):
+            index.rpc(url, {"jsonrpc": "2.0", "id": 1, "method": "x"}, deadline=time.monotonic() + 1)
         self.assertLess(time.monotonic() - t0, 3)
-        srv.shutdown()
 
 
 if __name__ == "__main__":

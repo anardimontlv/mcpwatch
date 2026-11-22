@@ -9,7 +9,7 @@ Package servers get static checks only: third-party code is never run.
 import argparse, html, json, os, re, sys, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-import hashlib, ipaddress, socket
+import hashlib, http.client, ipaddress, socket
 from urllib.parse import urlsplit
 from agentguard.scan import scan_server, scan_tools, score, badge, safe_url
 
@@ -54,7 +54,37 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # a redirect could point at an internal address we never vetted
 
 
-_opener = urllib.request.build_opener(_NoRedirect)
+def _check_peer(sock):
+    # checked on the live socket, before any request bytes are sent: defeats DNS rebinding
+    if not ipaddress.ip_address(sock.getpeername()[0].split("%")[0]).is_global:
+        sock.close()
+        raise ConnectionRefusedError("refusing non-public address")
+
+
+class _GuardedHTTP(http.client.HTTPConnection):
+    def connect(self):
+        super().connect()
+        _check_peer(self.sock)
+
+
+class _GuardedHTTPS(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        _check_peer(self.sock)
+
+
+class _GuardedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_GuardedHTTP, req)
+
+
+class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_GuardedHTTPS, req, context=self._context)
+
+
+# ProxyHandler({}) ignores env proxies, which would otherwise hide the real peer
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, _GuardedHTTPHandler, _GuardedHTTPSHandler)
 PROBE_DEADLINE = 20  # seconds for the whole handshake, however slowly a server drips bytes
 
 
@@ -65,7 +95,7 @@ def public_host(url):
         if p.scheme not in ("http", "https") or not p.hostname:
             return False
         infos = socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
-        # shortcut: DNS could change between this check and the connect (rebinding); pin the IP if this ever runs with secrets
+        # fast pre-filter only; the authoritative check is _check_peer on the connected socket
         return bool(infos) and all(ipaddress.ip_address(i[4][0].split("%")[0]).is_global for i in infos)
     except (OSError, ValueError):
         return False
