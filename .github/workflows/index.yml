@@ -29,7 +29,7 @@ jobs:
           assert s["servers"] > 1000, s  # a broken registry fetch must not wipe the public index
           print(s)
           PY
-      - name: append today's changes to the history branch (kept forever: this is the moat)
+      - name: append today's changes to the history branch (kept forever, this is the moat)
         run: |
           cd hist
           git config user.name "mcpwatch-bot"
