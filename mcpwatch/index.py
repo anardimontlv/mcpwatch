@@ -461,6 +461,12 @@ def write_site(results, out, changes=None):
             body = fh.read().replace("{{LEGAL_ENTITY}}", entity)
         with open(f"{out}/{name}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}."))
+    with open(f"{out}/404.html", "w", encoding="utf-8") as fh:  # Vercel serves this for any unknown path
+        fh.write(page("Page not found: mcpwatch",
+                      "<div class='hero'><h1>Page not found</h1><p class='lede'>That address doesn't exist on mcpwatch. "
+                      "Looking for a server? Search the index from the home page.</p>"
+                      "<div class='cta'><a class='btn pri' href='/'>Search the index</a><a class='btn' href='/scan'>Scan your config</a></div></div>",
+                      "Page not found.", noindex=True))
     write_scan_assets(out)  # /scan.js for the in-browser scanner, /watch.js for the watchlist
     with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
         json.dump(changes or [], fh, separators=(",", ":"))
