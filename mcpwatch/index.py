@@ -204,6 +204,7 @@ def assess(s, do_probe=True):
             "repo": str(repo.get("url", "")), "score": pts, "grade": grade, "findings": uniq,
             "notes": notes, "tools": [str(t.get("name", "?")) for t in lst(tools)][:100],
             "auth": auth, "fp": fingerprints(lst(tools)) if auth == "open" else None, "pk": pk,
+            "verified": datetime.now(timezone.utc).strftime("%Y-%m-%d") if auth == "open" else None,
             "keys": registry_keys(s), "tool_text": {str(t.get("name", "?")): str(t.get("description", ""))[:300] for t in lst(tools)}}
 
 
@@ -249,7 +250,8 @@ def compact(r):
     return {"n": r["name"], "t": r["title"][:120], "d": r["description"][:400], "v": r["version"][:40],
             "r": r["repo"] if r["repo"].startswith("https://") else "", "s": r["score"], "g": r["grade"],
             "f": [[x["severity"], x["rule"], x["message"][:300]] for x in r["findings"][:20]],
-            "o": r["notes"][:6], "k": r["tools"][:30], "h": r.get("fp"), "a": r.get("auth"), "p": r.get("pk") or {}}
+            "o": r["notes"][:6], "k": r["tools"][:30], "h": r.get("fp"), "a": r.get("auth"), "p": r.get("pk") or {},
+            "v": r.get("verified")}  # last day the fingerprints were observed live
 
 
 SERVER_JS = """
@@ -393,15 +395,18 @@ def load_prev(d):
     return prev
 
 
-def track_changes(results, prev):
-    """Diff each server against yesterday; servers unreachable today keep yesterday's fingerprints."""
+def track_changes(results, prev, today=None):
+    """Diff each server against yesterday; servers unreachable today keep yesterday's fingerprints (and their
+    old verified date, so clients can fail on staleness)."""
+    today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     items = []
     for r in results:
-        old = prev.get(slug(r["name"]))
+        old = prev.get(slug(r["name"])) or {}
         if not old:
             continue
         if r["fp"] is None and old.get("h") and r["auth"] in ("down", "none"):
             r["fp"] = old["h"]  # unknown is not "all tools removed"
+            r["verified"] = old.get("v")
         cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"]}
         ch = diff(old, cur)
         if ch:
@@ -425,7 +430,7 @@ def main(argv=None):
         results = list(ex.map(lambda s: assess(s, not a.no_probe), servers))
     prev = load_prev(a.prev) if a.prev else {}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    items = track_changes(results, prev)
+    items = track_changes(results, prev, today)
     changes = []
     if a.history:
         os.makedirs(a.history, exist_ok=True)

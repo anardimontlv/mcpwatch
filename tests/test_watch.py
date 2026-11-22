@@ -14,7 +14,8 @@ class DiffTest(unittest.TestCase):
 
     def test_unknown_is_not_change(self):
         old = {"h": {"add": "aaa"}, "a": "open", "g": "A"}
-        self.assertEqual(diff(old, {"h": None, "a": "down", "g": "A"}), [])
+        kinds = {c["kind"] for c in diff(old, {"h": None, "a": "down", "g": "A"})}
+        self.assertNotIn("tool_removed", kinds)  # an outage is never "tools removed"
 
     def test_auth_dropped(self):
         self.assertEqual(diff({"a": "auth"}, {"a": "open"})[0]["kind"], "auth_dropped")
@@ -56,6 +57,29 @@ class FailClosedTest(unittest.TestCase):
         self.assertIn("refusing to guess", snap["x"]["ambiguous"])
 
 
+class HidingTest(unittest.TestCase):
+    def _check(self, locked, current, max_stale="3"):
+        from mcpwatch import watch
+        orig = watch.snapshot
+        watch.snapshot = lambda servers: {"x": current}
+        self.addCleanup(setattr, watch, "snapshot", orig)
+        with tempfile.TemporaryDirectory() as d:
+            cfg, lock = f"{d}/c.json", f"{d}/l"
+            json.dump({"mcpServers": {"x": {"url": "https://x.example.com/mcp"}}}, open(cfg, "w"))
+            json.dump({"servers": {"x": locked}}, open(lock, "w"))
+            return watch.main(["check", cfg, "--lock", lock, "--max-stale", max_stale])
+
+    def test_server_going_dark_eventually_fails(self):
+        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "v": "2026-01-01"}
+        today = __import__("datetime").date.today().isoformat()
+        self.assertEqual(self._check(locked, {**locked, "a": "down", "v": today}), 0)  # fresh: carried fingerprints ok
+        self.assertEqual(self._check(locked, {**locked, "a": "down", "v": "2026-01-01"}), 1)  # stale: fail
+
+    def test_reassigned_slug_fails(self):
+        locked = {"slug": "x-1", "h": {"t": "aaa"}, "a": "open", "v": "2999-01-01"}
+        self.assertEqual(self._check(locked, {**locked, "slug": "evil-2"}), 1)
+
+
 class KeyTest(unittest.TestCase):
     def test_config_matches_registry(self):
         reg = {"remotes": [{"url": "https://Mcp.Example.com/mcp/"}],
@@ -75,8 +99,9 @@ class TrackTest(unittest.TestCase):
         from mcpwatch.index import track_changes, slug
         r = {"name": "x", "fp": None, "auth": "down", "grade": "A", "pk": {}, "tool_text": {}}
         prev = {slug("x"): {"h": {"t": "aaa"}, "a": "open", "g": "A", "p": {}}}
-        self.assertEqual(track_changes([r], prev), [])
+        self.assertEqual(track_changes([r], {k: {**v, "v": "2026-01-01"} for k, v in prev.items()}), [])
         self.assertEqual(r["fp"], {"t": "aaa"})  # carried forward for tomorrow's diff
+        self.assertEqual(r["verified"], "2026-01-01")  # but not re-verified: clients can fail on staleness
 
 
 class LockCheckEndToEnd(unittest.TestCase):

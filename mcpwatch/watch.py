@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 BASE = os.environ.get("MCPWATCH_URL", "https://www.mcpwatch.io").rstrip("/")
 DRIFT_SEV = {"tool_changed": "high", "auth_dropped": "high", "tool_added": "medium", "tool_removed": "medium",
              "grade_changed": "medium", "package_changed": "low", "auth_added": "medium",  # auth can hide later tool changes
-             "fingerprints_lost": "medium", "gone": "high"}
+             "fingerprints_lost": "medium", "gone": "high", "reassigned": "high", "stale": "medium"}
 
 
 # ---- fingerprints and lookup keys (shared with the indexer) ----
@@ -97,7 +97,7 @@ def diff(prev, cur):
     out = []
     add = lambda kind, detail: out.append({"kind": kind, "sev": DRIFT_SEV[kind], "detail": detail})
     ph, ch = prev.get("h"), cur.get("h")
-    if ph and not ch and cur.get("a") not in ("down", "none"):
+    if ph and not ch:
         add("fingerprints_lost", "tools are no longer publicly verifiable")
     if ph and ch and cur.get("a") == "open":
         for t in sorted(set(ph) & set(ch)):
@@ -165,7 +165,8 @@ def snapshot(servers):
         except Ambiguous as e:
             out[name] = {"slug": None, "ambiguous": str(e)}
             continue
-        out[name] = {"slug": sl, "name": rec.get("n"), "h": rec.get("h"), "a": rec.get("a"), "g": rec.get("g"), "p": rec.get("p")} if rec else {"slug": None}
+        out[name] = {"slug": sl, "name": rec.get("n"), "h": rec.get("h"), "a": rec.get("a"), "g": rec.get("g"), "p": rec.get("p"),
+                     "v": rec.get("v")} if rec else {"slug": None}
     return out
 
 
@@ -175,6 +176,7 @@ def main(argv=None):
     ap.add_argument("cmd", choices=["lock", "check"])
     ap.add_argument("config")
     ap.add_argument("--lock", default="mcpwatch.lock")
+    ap.add_argument("--max-stale", type=int, default=3, help="check: fail if pinned tools were last verified more than N days ago")
     a = ap.parse_args(argv)
     try:
         with open(a.config, encoding="utf-8") as fh:
@@ -206,6 +208,8 @@ def main(argv=None):
     except (OSError, ValueError) as e:
         print(f"mcpwatch: cannot read lock file ({e}); run `lock` first", file=sys.stderr)
         return 2
+    import datetime
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=a.max_stale)).strftime("%Y-%m-%d")
     drift = 0
     for name, cur in now.items():
         prev = locked.get(name)
@@ -217,6 +221,14 @@ def main(argv=None):
             print(f"  [HIGH    ] {name}: gone {cur.get('ambiguous') or 'no longer in the public index'}")
             drift += 1
             continue
+        if prev.get("slug") and cur["slug"] != prev["slug"]:
+            print(f"  [HIGH    ] {name}: reassigned: now resolves to {cur['slug']}, pinned {prev['slug']}")
+            drift += 1
+            continue
+        # a server that hides from the indexer (blocks us, goes "down") must not keep passing on old fingerprints
+        if prev.get("h") and (cur.get("v") or "") < cutoff:
+            print(f"  [MEDIUM  ] {name}: stale: tools last verified {cur.get('v') or 'never'}, older than {a.max_stale} day(s)")
+            drift += 1
         for c in diff(prev, cur):
             print(f"  [{c['sev'].upper():8}] {name}: {c['kind']} {c['detail']}")
             drift += c["sev"] in ("high", "medium")
