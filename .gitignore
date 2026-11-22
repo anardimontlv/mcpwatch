@@ -8,3 +8,6 @@ __pycache__/
 site/
 .private/
 .playwright-mcp/
+.env
+.env.*
+!.env.example
