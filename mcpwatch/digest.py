@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Daily watchlist digest (free Pro beta): one email per confirmed user whose watched servers changed today.
+"""Watchlist digest: one email per confirmed user whose watched servers changed.
 
   python -m mcpwatch.digest --changes site/changes.json [--dry-run]
+
+Billing off (BILLING_ENABLED unset, the free beta): everyone gets a daily digest of today's changes.
+Billing on: Pro/Team get the daily digest; Free gets a weekly one on Mondays (UTC) covering the last 7 days.
 
 Runs after the index publishes. It must never fail the pipeline: on any DB or email error it prints a sanitized
 message and exits 0. Needs DATABASE_URL (Neon) and RESEND_API_KEY; without them it skips. Stdlib only.
 """
 import argparse, hashlib, json, os, secrets, sys, urllib.parse, urllib.request
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 
 SITE = "https://www.mcpwatch.io"
 UA = "mcpwatch-digest/0.1"
@@ -35,20 +39,27 @@ def resend_send(to, subject, text, key):
         return 200 <= r.status < 300
 
 
-def recipients(items, query):
-    """{email: [items]} for confirmed users watching any of today's changed servers. One query."""
-    by_slug = {it["slug"]: it for it in items}
-    rows = query("SELECT u.id, u.email, w.slug FROM users u JOIN watches w ON w.user_id = u.id "
+# same as EFFECTIVE_PLAN in api/_lib.js: canceled/paused = free, past_due keeps the plan for 7 days
+EFFECTIVE_PLAN = ("CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', 'trialing') "
+                  "OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END")
+
+
+def watchers(slugs, query):
+    """{email: {"id", "plan", "slugs"}} for confirmed users watching any of `slugs`. One query."""
+    rows = query("SELECT u.id, u.email, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users u JOIN watches w ON w.user_id = u.id "
                  "WHERE u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
-                 "ORDER BY u.email, w.slug", [json.dumps(sorted(by_slug))])
-    out, ids = {}, {}
+                 "ORDER BY u.email, w.slug", [json.dumps(sorted(slugs))])
+    out = {}
     for r in rows:
-        if r["slug"] in by_slug:
-            ids[r["email"]] = r["id"]
-            out.setdefault(r["email"], []).append(by_slug[r["slug"]])
-    for its in out.values():  # notable first, as on the radar
-        its.sort(key=lambda it: (not it.get("notable"), it.get("name", "")))
-    return out, ids
+        u = out.setdefault(r["email"], {"id": r["id"], "plan": r.get("plan") or "free", "slugs": set()})
+        u["slugs"].add(r["slug"])
+    return out
+
+
+def pick(items, slugs):
+    its = [it for it in items if it["slug"] in slugs]
+    its.sort(key=lambda it: (not it.get("notable"), it.get("name", ""), it.get("date", "")))  # notable first, as on the radar
+    return its
 
 
 # same as api/_lib.js issueToken: hash-only storage, 90-day unsubscribe tokens, no cap (a cap would let others evict
@@ -56,12 +67,16 @@ def recipients(items, query):
 ISSUE_UNSUB = "INSERT INTO tokens (user_id, kind, hash, expires_at) VALUES ($1, 'unsub', $2, now() + interval '90 days')"
 
 
-def render(date, items, unsub_url):
+def render(date, items, unsub_url, since=None):
     n = len(items)
-    subject = f"mcpwatch: {n} watched server{'s' if n != 1 else ''} changed on {date}"
-    lines = [f"Changes on {date} to MCP servers you watch with mcpwatch (free beta).", ""]
+    if since:  # weekly: items carry their own date
+        subject = f"mcpwatch weekly: {n} change{'s' if n != 1 else ''} to servers you watch ({since} to {date})"
+        lines = [f"Changes from {since} to {date} to MCP servers you watch with mcpwatch.", ""]
+    else:
+        subject = f"mcpwatch: {n} watched server{'s' if n != 1 else ''} changed on {date}"
+        lines = [f"Changes on {date} to MCP servers you watch with mcpwatch.", ""]
     for it in items:
-        lines.append(f"{it.get('name', it['slug'])}")
+        lines.append(f"{it.get('name', it['slug'])}" + (f" ({it['date']})" if since and it.get("date") else ""))
         lines.append(f"  {SITE}/s/{it['slug']}")
         for why in it.get("notable") or []:
             lines.append(f"  Notable: {why}")
@@ -74,20 +89,26 @@ def render(date, items, unsub_url):
     return subject, "\n".join(lines)
 
 
-def run(changes, today, query, send, dry_run=False):
+def run(changes, today, query, send, dry_run=False, billing=False):
     """Returns (sent, failed). `query(sql, params)` and `send(to, subject, text, idempotency_key)` are injected."""
-    if not changes or changes[0].get("date") != today:
-        print(f"digest: no change file for {today}, nothing to send")
-        return 0, 0
-    items = changes[0].get("items") or []
-    if not items:
-        print("digest: no changes today")
+    changes = changes or []
+    daily = (changes[0].get("items") or []) if changes and changes[0].get("date") == today else []
+    since = (date.fromisoformat(today) - timedelta(days=6)).isoformat()
+    weekly = [dict(it, date=d["date"]) for d in changes if isinstance(d.get("date"), str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d["date"])
+              and since <= d["date"] <= today for it in d.get("items") or []] if billing and date.fromisoformat(today).weekday() == 0 else []
+    if not daily and not weekly:
+        print(f"digest: no changes to send for {today}")
         return 0, 0
     if not dry_run:
         query("DELETE FROM tokens WHERE expires_at < now()", [])  # prune; older unsubscribe links stay valid until they expire
-    users, ids = recipients(items, query)
+    users = {}
+    for email, u in watchers({it["slug"] for it in daily + weekly}, query).items():
+        week = billing and u["plan"] == "free"
+        its = pick(weekly if week else daily, u["slugs"])
+        if its:
+            users[email] = (u["id"], its, since if week else None)
     sent = failed = 0
-    for email, its in users.items():
+    for email, (uid, its, wk) in users.items():
         if dry_run:
             sent += 1
             continue
@@ -95,8 +116,8 @@ def run(changes, today, query, send, dry_run=False):
             # a fresh unsubscribe token per digest (only its hash is stored, so an old one can't be re-sent);
             # earlier digests' links keep working for 90 days
             tok = secrets.token_urlsafe(32)
-            query(ISSUE_UNSUB, [ids[email], hashlib.sha256(tok.encode()).hexdigest()])
-            subject, text = render(today, its, f"{SITE}/api/unsubscribe?t={tok}")
+            query(ISSUE_UNSUB, [uid, hashlib.sha256(tok.encode()).hexdigest()])
+            subject, text = render(today, its, f"{SITE}/api/unsubscribe?t={tok}", wk)
             key = f"digest-{today}-{hashlib.sha256(email.encode()).hexdigest()[:24]}"
             if send(email, subject, text, key):
                 sent += 1
@@ -107,6 +128,10 @@ def run(changes, today, query, send, dry_run=False):
             print(f"digest: send failed ({type(e).__name__}{': HTTP ' + str(e.code) if hasattr(e, 'code') else ''})")
     print(f"digest: {len(users)} recipient(s), {sent} {'would be ' if dry_run else ''}sent, {failed} failed")
     return sent, failed
+
+
+def billing_enabled():
+    return (os.environ.get("BILLING_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def main(argv=None):
@@ -121,7 +146,7 @@ def main(argv=None):
         with open(a.changes, encoding="utf-8") as fh:
             changes = json.load(fh)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        run(changes, today, neon_query, resend_send, a.dry_run)
+        run(changes, today, neon_query, resend_send, a.dry_run, billing_enabled())
     except Exception as e:  # sanitized: exception text can carry the connection string or an address
         print(f"digest: failed ({type(e).__name__}{': HTTP ' + str(e.code) if hasattr(e, 'code') else ''}); the index is unaffected")
     return 0

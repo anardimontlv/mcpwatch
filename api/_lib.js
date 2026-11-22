@@ -51,7 +51,25 @@ async function fetchJSON(url) {
   return r.json();
 }
 
-const deps = { sql: neonSql, sendMail: resendSend, fetchJSON };
+// ---- Paddle Billing REST (no SDK, no Paddle.js). Shapes checked against developer.paddle.com and the official
+// node SDK source (github.com/PaddleHQ/paddle-node-sdk: src/internal/api/constants.ts for base URLs, client.ts for auth).
+const PADDLE_BASE = { production: "https://api.paddle.com", sandbox: "https://sandbox-api.paddle.com" };
+async function paddleFetch(method, path, body) {
+  const base = PADDLE_BASE[process.env.PADDLE_ENV === "production" ? "production" : "sandbox"];
+  const r = await fetch(base + path, {
+    method,
+    headers: { Authorization: `Bearer ${process.env.PADDLE_API_KEY}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) { // never log bodies: they carry customer data
+    console.error(`paddle ${method} ${path.split("?")[0].replace(/\/(ctm|sub|txn)_[a-z0-9]+/g, "/$1_…")}: HTTP ${r.status}`);
+    throw new HttpError(502, "the billing provider is unavailable, try again shortly");
+  }
+  return r.json();
+}
+
+const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, paddle: paddleFetch };
 const sql = (query, params = []) =>
   deps.sql(query, params.map((p) => (p == null ? null : typeof p === "object" ? JSON.stringify(p) : String(p))));
 const sendMail = (m) => deps.sendMail(m);
@@ -77,6 +95,13 @@ function ensureSchema() {
       `DELETE FROM users WHERE NOT confirmed AND created_at < now() - interval '7 days'`,
       `CREATE INDEX IF NOT EXISTS watches_slug ON watches (slug)`,
       `CREATE TABLE IF NOT EXISTS ratelimit (k text NOT NULL, at timestamptz NOT NULL DEFAULT now())`,
+      // billing (inert unless BILLING_ENABLED): plan is what was bought, plan_status gates it (see EFFECTIVE_PLAN)
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'team')),
+        ADD COLUMN IF NOT EXISTS paddle_customer_id text, ADD COLUMN IF NOT EXISTS paddle_subscription_id text UNIQUE,
+        ADD COLUMN IF NOT EXISTS plan_status text, ADD COLUMN IF NOT EXISTS plan_updated_at timestamptz,
+        ADD COLUMN IF NOT EXISTS past_due_since timestamptz`,
+      `CREATE TABLE IF NOT EXISTS webhook_events (event_id text PRIMARY KEY, received_at timestamptz NOT NULL DEFAULT now())`,
+      `DELETE FROM webhook_events WHERE received_at < now() - interval '90 days'`,
       `CREATE INDEX IF NOT EXISTS ratelimit_k_at ON ratelimit (k, at)`,
     ]) await sql(q);
   })().catch((e) => { schema = null; throw e; });
@@ -96,9 +121,21 @@ async function issueToken(userId, kind) {
     [userId, kind, hash(t), TOKEN_TTL[kind]]);
   return t;
 }
-// The user behind an unexpired token of exactly this kind, or undefined.
+// The plan a user gets right now, enforced by subscription status: canceled/paused (Paddle flips the status at the
+// period end) mean free; past_due keeps the plan for a 7-day grace. mcpwatch/digest.py has the same expression.
+const EFFECTIVE_PLAN = `CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', 'trialing')
+  OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END`;
+const billingEnabled = () => /^(1|true|yes|on)$/i.test(process.env.BILLING_ENABLED || "");
+const envInt = (k, d) => (/^\d+$/.test(process.env[k] || "") ? Number(process.env[k]) : d);
+function planLimit(plan) {
+  if (!billingEnabled()) return MAX_SLUGS;
+  return Math.min(MAX_SLUGS, { free: envInt("FREE_WATCH_LIMIT", 3), pro: envInt("PRO_WATCH_LIMIT", 50), team: envInt("TEAM_WATCH_LIMIT", 200) }[plan] ?? 3);
+}
+
+// The user behind an unexpired token of exactly this kind (with effective plan), or undefined.
 const tokenUser = async (kind, t) => (await sql(
-  `SELECT u.id, u.email FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = $1 AND t.kind = $2 AND t.expires_at > now()`,
+  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id
+   FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = $1 AND t.kind = $2 AND t.expires_at > now()`,
   [hash(t), kind]))[0];
 // Deletes the user behind an unexpired token of this kind; tokens and watches go with it (ON DELETE CASCADE).
 const deleteByToken = async (kind, t) => (await sql(
@@ -161,12 +198,23 @@ async function cleanSlugs(v, { checkExists = true } = {}) {
   return slugs;
 }
 
-// Adds slugs up to the per-user cap. pending=true for unauthenticated adds (activated by the confirm link).
-const addWatches = (userId, slugs, pending) => slugs.length ? sql(
+// Adds slugs up to `limit` watches in total (pending included). pending=true for unauthenticated adds (activated by
+// the confirm link). Silently truncates: callers that can say so (manage) check first with overLimit().
+const addWatches = (userId, slugs, pending, limit = MAX_SLUGS) => slugs.length ? sql(
+  // slugs already watched go first and only the user's *other* rows count against the limit, so re-adding an existing
+  // slug never pushes a new one out
   `INSERT INTO watches (user_id, slug, pending)
-   SELECT $1, s, $3::boolean FROM jsonb_array_elements_text($2::jsonb) AS s
-   LIMIT GREATEST(0, ${MAX_SLUGS} - (SELECT count(*) FROM watches WHERE user_id = $1))
-   ON CONFLICT (user_id, slug) DO UPDATE SET pending = watches.pending AND EXCLUDED.pending`, [userId, slugs, pending]) : null;
+   SELECT $1, x.s, $3::boolean FROM jsonb_array_elements_text($2::jsonb) WITH ORDINALITY AS x(s, i)
+   ORDER BY EXISTS (SELECT 1 FROM watches w WHERE w.user_id = $1 AND w.slug = x.s) DESC, x.i
+   LIMIT GREATEST(0, $4::int - (SELECT count(*) FROM watches w WHERE w.user_id = $1
+     AND w.slug NOT IN (SELECT jsonb_array_elements_text($2::jsonb))))
+   ON CONFLICT (user_id, slug) DO UPDATE SET pending = watches.pending AND EXCLUDED.pending`, [userId, slugs, pending, limit]) : null;
+
+function limitError(plan, limit) {
+  if (!billingEnabled()) return new HttpError(400, `you can watch up to ${limit} servers`);
+  return new HttpError(402, plan === "free" ? `the free plan watches up to ${limit} servers: upgrade to Pro to watch up to ${planLimit("pro")}`
+    : `your plan watches up to ${limit} servers`);
+}
 
 function send(res, status, obj) {
   res.statusCode = status;
@@ -213,5 +261,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };

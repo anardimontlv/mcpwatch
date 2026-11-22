@@ -32,11 +32,18 @@ module.exports = L.handler(async (req, res) => {
   }
   const user = await L.tokenUser("manage", body.token);
   if (!user) throw new L.HttpError(403, "invalid or expired manage link");
-  if (action === "add") await L.addWatches(user.id, await L.cleanSlugs(body.slugs), false);
+  const limit = L.planLimit(user.plan);
+  if (action === "add") {
+    const slugs = await L.cleanSlugs(body.slugs);
+    const have = new Set((await L.sql(`SELECT slug FROM watches WHERE user_id = $1`, [user.id])).map((r) => r.slug));
+    if (have.size + slugs.filter((s) => !have.has(s)).length > limit) throw L.limitError(user.plan, limit);
+    await L.addWatches(user.id, slugs, false, limit);
+  }
   if (action === "remove") {
     const slugs = await L.cleanSlugs(body.slugs, { checkExists: false });
     if (slugs.length) await L.sql(`DELETE FROM watches WHERE user_id = $1 AND slug IN (SELECT jsonb_array_elements_text($2::jsonb))`, [user.id, slugs]);
   }
   const rows = await L.sql(`SELECT slug FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
-  L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), max: L.MAX_SLUGS });
+  L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), max: limit, limit,
+    plan: user.plan, billing_enabled: L.billingEnabled() });
 });

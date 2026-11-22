@@ -14,15 +14,17 @@ CHANGES = [{"date": TODAY, "items": [B, A, C]}, {"date": "2026-11-21", "items": 
 
 
 class FakeDB:
-    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com")):
-        self.watches, self.confirmed, self.queries, self.unsub = watches, set(confirmed), [], {}
+    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com"), plans=None):
+        self.watches, self.confirmed, self.queries, self.unsub, self.plans = watches, set(confirmed), [], {}, plans or {}
         self.ids = {e: str(i) for i, e in enumerate(sorted({e for e, _ in watches}), 1)}
 
     def __call__(self, q, params):
         self.queries.append((q, params))
         if q.startswith("SELECT u.id, u.email"):
             wanted = set(json.loads(params[0]))
-            return [{"id": self.ids[e], "email": e, "slug": s} for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
+            assert "AS plan" in q and "past_due_since > now() - interval '7 days'" in q  # plan is enforced by status in SQL
+            return [{"id": self.ids[e], "email": e, "slug": s, "plan": self.plans.get(e, "free")}
+                    for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
         if q.startswith("INSERT INTO tokens") and "'unsub'" in q:
             self.unsub.setdefault(params[0], []).append(params[1])  # older tokens are kept, not replaced
             return []
@@ -106,6 +108,63 @@ class Digest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"DATABASE_URL": secret_url, "RESEND_API_KEY": "re_x"}), redirect_stdout(io.StringIO()):
                 self.assertEqual(digest.main(["--changes", os.path.join(d, "missing.json")]), 0)
 
+
+
+MONDAY = "2026-11-23"
+OLD = {"slug": "old-0e1b2c3d", "name": "io.example/old", "notable": [], "changes": [{"kind": "tool_added", "sev": "medium", "detail": "z"}]}
+WEEK = [{"date": MONDAY, "items": [A]}, {"date": "2026-11-20", "items": [B]}, {"date": "2026-11-17", "items": [C]},
+        {"date": "2026-11-16", "items": [OLD]}]
+
+
+class DigestPlans(unittest.TestCase):
+    """BILLING_ENABLED: Pro/Team daily, Free weekly on Mondays (last 7 days); billing off: everyone daily."""
+
+    def go(self, db, changes, today, billing):
+        sent = []
+        with redirect_stdout(io.StringIO()):
+            digest.run(changes, today, db, lambda to, subject, text, key: sent.append((to, subject, text)) or True, billing=billing)
+        return {to: (subject, text) for to, subject, text in sent}
+
+    def db(self):
+        w = [(e, s["slug"]) for e in ("free@example.com", "pro@example.com", "team@example.com") for s in (A, B, C, OLD)]
+        return FakeDB(w, confirmed=("free@example.com", "pro@example.com", "team@example.com"),
+                      plans={"pro@example.com": "pro", "team@example.com": "team"})
+
+    def test_monday_free_gets_weekly_paid_get_daily(self):
+        got = self.go(self.db(), WEEK, MONDAY, True)
+        self.assertEqual(set(got), {"free@example.com", "pro@example.com", "team@example.com"})
+        subject, text = got["free@example.com"]
+        self.assertIn("weekly", subject)
+        self.assertIn("2026-11-17 to 2026-11-23", subject)
+        for it in (A, B, C):
+            self.assertIn(it["name"], text)
+        self.assertNotIn(OLD["name"], text, "older than 7 days")
+        self.assertIn("io.example/beta (2026-11-20)", text)
+        self.assertLess(text.index("io.example/beta"), text.index("io.example/alpha"), "notable first")
+        for paid in ("pro@example.com", "team@example.com"):
+            subject, text = got[paid]
+            self.assertNotIn("weekly", subject)
+            self.assertIn(A["name"], text)
+            self.assertNotIn(B["name"], text, "daily = today only")
+
+    def test_other_days_free_gets_nothing_paid_get_daily(self):
+        changes = [{"date": TODAY, "items": [A]}] + WEEK[1:]
+        got = self.go(self.db(), changes, TODAY, True)  # a Sunday
+        self.assertEqual(set(got), {"pro@example.com", "team@example.com"})
+
+    def test_monday_weekly_even_without_a_change_file_today(self):
+        got = self.go(self.db(), WEEK[1:], MONDAY, True)
+        self.assertEqual(set(got), {"free@example.com"})
+
+    def test_billing_off_everyone_daily(self):
+        got = self.go(self.db(), WEEK, MONDAY, False)
+        self.assertEqual(set(got), {"free@example.com", "pro@example.com", "team@example.com"})
+        self.assertTrue(all("weekly" not in s and B["name"] not in t for s, t in got.values()))
+
+    def test_flag_parsing(self):
+        for v, want in (("true", True), ("1", True), ("on", True), ("", False), ("false", False), ("0", False)):
+            with mock.patch.dict(os.environ, {"BILLING_ENABLED": v}):
+                self.assertEqual(digest.billing_enabled(), want, v)
 
 if __name__ == "__main__":
     unittest.main()

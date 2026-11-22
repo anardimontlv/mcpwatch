@@ -86,7 +86,27 @@
     $("w-who").textContent = "Daily digest goes to " + d.email + ". " + d.slugs.length + " server" + (d.slugs.length === 1 ? "" : "s") +
       " watched (you can watch up to " + d.max + " of the index's servers during the beta).";
     renderList(d.slugs);
+    renderBilling(d);
     return true;
+  }
+
+  // Paid plans: shown only when the server says billing is on. The target URL comes from our API (a Paddle page).
+  function renderBilling(d) {
+    const box = $("w-bill");
+    box.replaceChildren();
+    box.hidden = !d.billing_enabled;
+    if (!d.billing_enabled) return;
+    const free = d.plan === "free";
+    const b = el("button", free ? "Upgrade to Pro ($19/month)" : "Manage billing", free ? "btn pri" : "btn");
+    b.type = "button";
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      const { ok, d: r } = await post(free ? "/api/billing/checkout" : "/api/billing/portal", free ? { token, plan: "pro" } : { token });
+      if (ok && typeof r.url === "string" && /^https:\/\//.test(r.url)) { location.assign(r.url); return; }
+      msg("Could not open billing: " + ((r && r.error) || "unknown error") + ".");
+      b.disabled = false;
+    });
+    box.append(b, " ", el("span", free ? "Free plan: up to " + d.limit + " servers, weekly digest." : "Plan: " + d.plan + ", daily digest.", "mut sm"));
   }
 
   async function add(sl, t) {
