@@ -2,9 +2,9 @@ name: daily index
 on:
   schedule: [{ cron: "17 4 * * *" }]
   workflow_dispatch:
-  push: { branches: [main], paths: ["agentguard/**", "tests/**"] }
+  push: { branches: [main], paths: ["agentguard/**", "tests/**", "api/**", "vercel.json"] }
 permissions: { contents: write }
-concurrency: { group: index, cancel-in-progress: false }
+concurrency: { group: index, cancel-in-progress: true }
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,11 +15,21 @@ jobs:
         with: { python-version: "3.12" }
       - run: python -m unittest -q
       - run: python -m agentguard.index --out site
-      - name: commit refreshed site (Vercel deploys on push)
+      - name: sanity-check output before publishing
         run: |
+          python - <<'PY'
+          import json; s = json.load(open("site/stats.json"))
+          assert s["servers"] > 1000, s  # a broken registry fetch must not wipe the public index
+          print(s)
+          PY
+      - name: publish to the site branch (Vercel deploys it)
+        env: { GH_TOKEN: "${{ github.token }}", REPO: "${{ github.repository }}" }
+        # orphan commit force-pushed each run: generated data never accumulates in git history
+        run: |
+          mkdir -p /tmp/pub && cp -r site api vercel.json /tmp/pub/
+          cd /tmp/pub
+          git init -q -b site
           git config user.name "agentguard-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # runs can queue behind each other; move onto the latest main (mixed reset keeps our fresh site/ in the worktree)
-          git fetch -q origin main && git reset -q origin/main
-          git add site
-          git diff --cached --quiet || { git commit -q -m "index: daily refresh $(date -u +%F)" && git push; }
+          git add -A && git commit -q -m "index $(date -u +%F)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" site

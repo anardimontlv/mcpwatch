@@ -26,15 +26,16 @@ SECRET_PATTERNS = [
 SECRET_KEY_NAME = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH)", re.I)
 # names that mention a secret but hold a pointer, a mode or a number, not the secret itself
 NOT_SECRET_NAME = re.compile(r"(_FILE|_PATH|_DIR|_MODE|_TYPE|_METHOD|_URL|_ENDPOINT|_HEADER|_NAME|_ID|_REGION|^MAX_|_LIMIT|_TOKENS)$", re.I)
-SECRET_PARAM = re.compile(r"(key|token|secret|password|passwd|pwd|auth|signature|sig|access_token|apikey)", re.I)
-ENV_REF = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_:\-]*\}?|\$\{input:[^}]*\}|\{\{[^}]*\}\}")
+SECRET_PARAM = re.compile(r"(api[_-]?key|key|token|access[_-]?token|auth[_-]?token|secret|client[_-]?secret|password|passwd|pwd|auth|sig|signature)", re.I)  # whole param name
+ENV_REF = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_:\-]*\}?|\$\{input:[^}]*\}|\{\{[^}]*\}\}|\{[A-Za-z_][\w.\-]*\}|<[A-Za-z_][\w.\-]*>")
 RUNNERS = {"npx", "bunx", "pnpx", "uvx", "pipx", "dlx"}
 BROAD_PATH = re.compile(r"^(/|~|~/|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:[\\/]?|/Users/[^/]+|/home/[^/]+|/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
 UNSAFE_FLAGS = re.compile(r"^--?(allow-all|allow-all-tools|dangerously-skip-permissions|no-sandbox|disable-sandbox|unsafe|yolo|trust-all)(=.*)?$", re.I)
 INJECTION = re.compile(
     r"(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
     r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}user|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
-    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://|\.ssh/|id_(rsa|ed25519|ecdsa)|exfiltrat",
+    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://"
+    r"|(read|cat|open|include|attach|upload)\s+[^.]{0,30}(\.ssh/|id_(rsa|ed25519|ecdsa)\b)",  # asking to read keys, not mentioning them
     re.I,
 )
 DANGEROUS_TOKENS = {"exec", "execute", "shell", "bash", "sh", "zsh", "powershell", "sudo", "eval", "delete", "remove", "rm", "drop", "kill"}
@@ -87,7 +88,7 @@ def url_secrets(url):
         p = urlsplit(url)
         if p.password and not ENV_REF.search(p.password):
             return True
-        return any(SECRET_PARAM.search(k) and looks_like_value(v) for k, v in parse_qsl(p.query))
+        return any(SECRET_PARAM.fullmatch(k) and looks_like_value(v) for k, v in parse_qsl(p.query))
     except ValueError:
         return False
 
@@ -191,7 +192,7 @@ def name_tokens(name):
 
 
 def scan_tools(tools, server="(tools manifest)"):
-    f = []
+    f, risky = [], []
     for t in tools if isinstance(tools, list) else []:
         if not isinstance(t, dict):
             continue
@@ -205,7 +206,11 @@ def scan_tools(tools, server="(tools manifest)"):
             add("AG101", "critical", f"description contains instruction-like text aimed at the model ('{m.group(0)[:60]}'). Possible tool poisoning.")
         toks = name_tokens(name)
         if toks & DANGEROUS_TOKENS or {"run", "command"} <= toks:
-            add("AG102", "medium", "exposes command execution or deletion. Require confirmation before the agent calls it.")
+            risky.append(name)
+    if risky:  # one finding per server: an admin API with 13 delete tools is not 13x worse
+        shown = ", ".join(risky[:5]) + (f" and {len(risky) - 5} more" if len(risky) > 5 else "")
+        f.append({"server": server, "rule": "AG102", "severity": "medium",
+                  "message": f"{len(risky)} tool(s) can execute commands or delete data ({shown}). Require confirmation before the agent calls them."})
     return f
 
 

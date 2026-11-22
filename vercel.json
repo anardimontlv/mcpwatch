@@ -3,15 +3,20 @@
   "installCommand": "",
   "outputDirectory": "site",
   "cleanUrls": true,
-  "git": { "deploymentEnabled": { "main": true } },
+  "git": { "deploymentEnabled": { "main": false } },
+  "rewrites": [
+    { "source": "/badge/:slug.svg", "destination": "/api/badge?slug=:slug" },
+    { "source": "/s/:slug", "destination": "/s.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:" },
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
-    }
+    },
+    { "source": "/d/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }] }
   ]
 }

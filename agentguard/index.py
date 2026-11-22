@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib, http.client, ipaddress, socket
 from urllib.parse import urlsplit
-from agentguard.scan import scan_server, scan_tools, score, badge, safe_url
+from agentguard.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal
 
 REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
 UA = "agentguard-index/0.1 (+https://github.com/anardimontlv/agentguard)"
@@ -187,7 +187,7 @@ def assess(s, do_probe=True):
         if not ver or ver in {"latest", "*"}:
             findings.append({"server": name, "rule": "AG002", "severity": "medium", "message": f"Package {ident} is published without a fixed version."})
         for ev in lst(p.get("environmentVariables")):
-            if ev.get("isSecret") and ev.get("default"):
+            if ev.get("isSecret") and is_secret_literal("SECRET", str(ev.get("default") or "")):  # "guest"/"test" defaults are not leaks
                 findings.append({"server": name, "rule": "AG001", "severity": "high", "message": f"Secret env {ev.get('name')} ships with a default value."})
         notes.append(f"{p.get('registryType', 'package')}: {ident}@{ver or '?'} (static checks only; code not executed)")
     # one finding per rule per message is enough for the public page
@@ -228,57 +228,119 @@ def g(grade):
     return f'<span class="g g{grade}">{grade}</span>'
 
 
+BASE = os.environ.get("AG_BASE_URL", "https://agentguard.vercel.app").rstrip("/")
+GRADE_ORDER = "FDCBA"
+
+
+def shard_of(sl):
+    return sl[-8:-6]  # first 2 hex chars of the slug's hash suffix: 256 shards
+
+
+def compact(r):
+    """What the public page needs; keeps 69k records small enough for a static deploy."""
+    return {"n": r["name"], "t": r["title"][:120], "d": r["description"][:400], "v": r["version"][:40],
+            "r": r["repo"] if r["repo"].startswith("https://") else "", "s": r["score"], "g": r["grade"],
+            "f": [[x["severity"], x["rule"], x["message"][:300]] for x in r["findings"][:20]],
+            "o": r["notes"][:6], "k": r["tools"][:30]}
+
+
+SERVER_JS = """
+const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\\.html$/,'');
+const m=document.getElementById('m');
+if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
+fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()).then(d=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
+document.title='Is '+r.t+' MCP server safe? Grade '+r.g;
+const h=$('h1',r.t+' ');h.className='wrap';h.append($('span',r.g,'g g'+r.g));
+const k=$('div',null,'card');k.append($('h2','Findings'));
+if(!r.f.length)k.append($('p','No issues found by current checks.'));
+r.f.forEach(f=>{const p=$('p',null,'wrap');p.append($('b',f[0]+' '+f[1]+': '),f[2]);k.append(p)});
+const c=$('div',null,'card');c.append($('h2','What was checked'));r.o.forEach(o=>c.append($('p',o,'wrap')));
+c.append($('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
+const b=$('div',null,'card');b.append($('h2','Maintainer? Add the badge'),
+ $('pre','[![agentguard](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
+m.replaceChildren($('p',r.n+' · v'+r.v+' · score '+r.s+'/100','mut wrap'),h,$('p',r.d,'wrap'),k,c,b)})
+.catch(()=>m.replaceChildren($('p','Could not load data.')))}
+"""
+
+SEARCH_JS = """
+const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const q=document.getElementById('q'),out=document.getElementById('res');let L=null;
+q.addEventListener('input',async()=>{const v=q.value.trim().toLowerCase();if(v.length<2){out.replaceChildren();return}
+if(!L)L=await (await fetch('/list.json')).json();
+const hits=L.filter(x=>x[0].includes(v)||x[1].toLowerCase().includes(v)).slice(0,50);
+out.replaceChildren(...hits.map(x=>{const tr=$('tr'),a=$('a',x[1]);a.href='/s/'+x[0];
+const td=$('td',null,'wrap');td.append(a);const g=$('td');g.append($('span',x[2],'g g'+x[2]));tr.append(g,td,$('td',String(x[3])));return tr}))});
+"""
+
+
 def write_site(results, out):
     os.makedirs(f"{out}/s", exist_ok=True)
-    os.makedirs(f"{out}/badge", exist_ok=True)
+    os.makedirs(f"{out}/d", exist_ok=True)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    shards, listing, notable = {}, [], []
     for r in results:
         sl = slug(r["name"])
-        with open(f"{out}/badge/{sl}.svg", "w", encoding="utf-8") as fh:
-            fh.write(badge(r["grade"]))
+        shards.setdefault(shard_of(sl), {})[sl] = compact(r)
+        listing.append([sl, r["title"][:120], r["grade"], len(r["findings"])])
+        if r["grade"] != "A":
+            notable.append((sl, r))
+    for k, v in shards.items():
+        with open(f"{out}/d/{k}.json", "w", encoding="utf-8") as fh:
+            json.dump(v, fh, separators=(",", ":"))
+    with open(f"{out}/list.json", "w", encoding="utf-8") as fh:
+        json.dump(listing, fh, separators=(",", ":"))
+
+    # static, crawlable pages only where there is something to say (grade below A); /s/<slug> covers the rest
+    for sl, r in notable:
         rows = "".join(f"<tr><td>{esc(x['severity'])}</td><td>{esc(x['rule'])}</td><td class='wrap'>{esc(x['message'])}</td></tr>"
-                       for x in r["findings"]) or "<tr><td colspan=3>No issues found by current checks.</td></tr>"
+                       for x in r["findings"])
         notes = "".join(f"<li class='wrap'>{esc(n)}</li>" for n in r["notes"])
-        tools = ", ".join(esc(t) for t in r["tools"]) or "not listed publicly"
-        md = f"[![agentguard](https://agentguard.vercel.app/badge/{sl}.svg)](https://agentguard.vercel.app/s/{sl}.html)"
+        tools = ", ".join(esc(t) for t in r["tools"][:30]) or "not listed publicly"
+        md = f"[![agentguard]({BASE}/badge/{sl}.svg)]({BASE}/s/{sl})"
         body = (f"<p><a href='/'>← All servers</a></p><h1 class='wrap'>{esc(r['title'])} {g(r['grade'])}</h1>"
                 f"<p class='mut wrap'>{esc(r['name'])} · v{esc(r['version'])} · score {r['score']}/100 · checked {now}</p>"
-                f"<p class='wrap'>{esc(r['description'])}</p>"
+                f"<p class='wrap'>{esc(r['description'][:600])}</p>"
                 + (f"<p class='wrap'>Source: <a rel='nofollow' href='{esc(r['repo'])}'>{esc(r['repo'])}</a></p>" if r['repo'].startswith("https://") else "")
                 + f"<div class='card'><h2>Findings</h2><table><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr>{rows}</table></div>"
-                f"<div class='card'><h2>What was checked</h2><ul>{notes}</ul><p>Public tools: {tools}</p></div>"
-                f"<div class='card'><h2>Maintainer? Add the badge</h2><pre>{esc(md)}</pre></div>")
+                f"<div class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></div>"
+                f"<div class='card'><h2>Maintainer? Fix, then add the badge</h2><p>Grades refresh daily.</p><pre class='wrap'>{esc(md)}</pre></div>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"Is {r['title']} MCP server safe? Grade {r['grade']}", body,
                           f"agentguard security grade {r['grade']} for the {r['title']} MCP server: findings, auth, tools."))
-    results = sorted(results, key=lambda r: (r["score"], r["name"]))
+    with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
+        fh.write(page("MCP server security grade: agentguard", "<p><a href='/'>← All servers</a></p><div id='m'><p>Loading…</p></div>"
+                      f"<script>{SERVER_JS.replace('BASE', BASE)}</script>", "agentguard security grade for an MCP server."))
+
     counts = {k: sum(r["grade"] == k for r in results) for k in "ABCDF"}
     open_n = sum(any(x["rule"] == "AG005" for x in r["findings"]) for r in results)
-    rows = "".join(f"<tr data-n='{esc(r['name'].lower())} {esc(r['title'].lower())}'><td>{g(r['grade'])}</td>"
-                   f"<td class='wrap'><a href='/s/{slug(r['name'])}.html'>{esc(r['title'])}</a><br><span class='mut'>{esc(r['name'])}</span></td>"
-                   f"<td>{len(r['findings'])}</td></tr>" for r in results)
+    worst = sorted(notable, key=lambda x: (x[1]["score"], x[1]["name"]))[:100]
+    rows = "".join(f"<tr><td>{g(r['grade'])}</td><td class='wrap'><a href='/s/{sl}'>{esc(r['title'])}</a>"
+                   f"<br><span class='mut'>{esc(r['name'])}</span></td><td>{len(r['findings'])}</td></tr>" for sl, r in worst)
     body = (f"<h1>Is your AI agent's MCP server safe?</h1>"
             f"<p>agentguard grades every server in the official MCP registry for leaked secrets, plain-HTTP endpoints, "
             f"unauthenticated tools and poisoned tool descriptions. Updated daily. Last run {now}.</p>"
-            f"<div class='card'><b>{len(results)}</b> servers · " + " · ".join(f"{g(k)} {v}" for k, v in counts.items())
-            + f" · <b>{open_n}</b> expose tools without auth</div>"
+            f"<div class='card'><b>{len(results):,}</b> servers · " + " · ".join(f"{g(k)} {v:,}" for k, v in counts.items())
+            + f" · <b>{open_n:,}</b> list tools to anyone without auth</div>"
             f"<div class='card'><h2>Scan your own config, free</h2><pre>git clone https://github.com/anardimontlv/agentguard &amp;&amp; cd agentguard\n"
             f"python3 -m agentguard.scan ~/.cursor/mcp.json</pre><p class='mut'>Works on Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs. "
             f"Runs locally; nothing leaves your machine.</p></div>"
-            f"<input id='q' placeholder='Search {len(results)} servers…' aria-label='Search servers'>"
-            f"<table><thead><tr><th>Grade</th><th>Server</th><th>Findings</th></tr></thead><tbody id='t'>{rows}</tbody></table>"
-            "<script>const q=document.getElementById('q'),rs=[...document.querySelectorAll('#t tr')];"
-            "q.oninput=()=>{const v=q.value.toLowerCase();rs.forEach(r=>r.hidden=v&&!r.dataset.n.includes(v))}</script>")
+            f"<input id='q' placeholder='Search {len(results):,} servers…' aria-label='Search servers'>"
+            f"<table><tbody id='res'></tbody></table>"
+            f"<h2>Lowest grades today</h2><table><thead><tr><th>Grade</th><th>Server</th><th>Findings</th></tr></thead><tbody>{rows}</tbody></table>"
+            f"<script>{SEARCH_JS}</script>")
     with open(f"{out}/index.html", "w", encoding="utf-8") as fh:
         fh.write(page("MCP Server Security Index: agentguard", body, "Daily security grades for every MCP server in the official registry."))
-    with open(f"{out}/index.json", "w", encoding="utf-8") as fh:
-        json.dump({"generated": now, "servers": results}, fh)
-    urls = "".join(f"<url><loc>https://agentguard.vercel.app/s/{slug(r['name'])}.html</loc></url>" for r in results)
+    with open(f"{out}/stats.json", "w", encoding="utf-8") as fh:
+        json.dump({"generated": now, "servers": len(results), "grades": counts, "open": open_n,
+                   "rules": {k: sum(x["rule"] == k for r in results for x in r["findings"]) for k in
+                             sorted({x["rule"] for r in results for x in r["findings"]})}}, fh)
+    urls = "".join(f"<url><loc>{BASE}/s/{sl}</loc></url>" for sl, _ in notable[:49000])
     with open(f"{out}/sitemap.xml", "w", encoding="utf-8") as fh:
         fh.write(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-                 f'<url><loc>https://agentguard.vercel.app/</loc></url>{urls}</urlset>')
+                 f'<url><loc>{BASE}/</loc></url>{urls}</urlset>')
     with open(f"{out}/robots.txt", "w", encoding="utf-8") as fh:
-        fh.write("User-agent: *\nAllow: /\nSitemap: https://agentguard.vercel.app/sitemap.xml\n")
+        fh.write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\n")
 
 
 def main(argv=None):
@@ -292,7 +354,7 @@ def main(argv=None):
     with ThreadPoolExecutor(48) as ex:
         results = list(ex.map(lambda s: assess(s, not a.no_probe), servers))
     write_site(results, a.out)
-    print(f"wrote {len(results)} pages to {a.out}/", file=sys.stderr)
+    print(f"indexed {len(results)} servers into {a.out}/", file=sys.stderr)
 
 
 if __name__ == "__main__":
