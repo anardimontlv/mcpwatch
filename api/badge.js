@@ -2,10 +2,10 @@
 const COLORS = { A: "#2e7d32", B: "#558b2f", C: "#f9a825", D: "#ef6c00", F: "#c62828", "?": "#9e9e9e" };
 
 function svg(grade) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="agentguard: ${grade}">` +
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="mcpwatch: ${grade}">` +
     `<rect width="96" height="20" fill="#555"/><rect x="96" width="32" height="20" fill="${COLORS[grade]}"/>` +
     `<g fill="#fff" font-family="Verdana,sans-serif" font-size="11" text-anchor="middle">` +
-    `<text x="48" y="14">agentguard</text><text x="112" y="14">${grade}</text></g></svg>`;
+    `<text x="48" y="14">mcpwatch</text><text x="112" y="14">${grade}</text></g></svg>`;
 }
 
 module.exports = async (req, res) => {

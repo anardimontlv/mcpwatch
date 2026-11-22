@@ -2,7 +2,7 @@ name: daily index
 on:
   schedule: [{ cron: "17 4 * * *" }]
   workflow_dispatch:
-  push: { branches: [main], paths: ["agentguard/**", "tests/**", "api/**", "vercel.json"] }
+  push: { branches: [main], paths: ["mcpwatch/**", "tests/**", "api/**", "vercel.json"] }
 permissions: { contents: write }
 concurrency: { group: index, cancel-in-progress: true }
 jobs:
@@ -14,7 +14,14 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: python -m unittest -q
-      - run: python -m agentguard.index --out site
+      - name: load yesterday's index and the change history
+        env: { GH_TOKEN: "${{ github.token }}", REPO: "${{ github.repository }}" }
+        run: |
+          mkdir -p prev
+          git fetch -q origin site && git archive origin/site site/d | tar -x -C prev || echo "no previous site: baseline run"
+          git clone -q --depth 1 --branch history --single-branch "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" hist \
+            || { mkdir -p hist && git -C hist init -q -b history && git -C hist remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"; }
+      - run: python -m mcpwatch.index --out site --prev prev/site/d --history hist
       - name: sanity-check output before publishing
         run: |
           python - <<'PY'
@@ -22,6 +29,13 @@ jobs:
           assert s["servers"] > 1000, s  # a broken registry fetch must not wipe the public index
           print(s)
           PY
+      - name: append today's changes to the history branch (kept forever: this is the moat)
+        run: |
+          cd hist
+          git config user.name "mcpwatch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || { git commit -q -m "changes $(date -u +%F)" && git push -q origin history; }
       - name: publish to the site branch (Vercel deploys it)
         env: { GH_TOKEN: "${{ github.token }}", REPO: "${{ github.repository }}" }
         # orphan commit force-pushed each run: generated data never accumulates in git history
@@ -29,7 +43,7 @@ jobs:
           mkdir -p /tmp/pub && cp -r site api vercel.json /tmp/pub/
           cd /tmp/pub
           git init -q -b site
-          git config user.name "agentguard-bot"
+          git config user.name "mcpwatch-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A && git commit -q -m "index $(date -u +%F)"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" site

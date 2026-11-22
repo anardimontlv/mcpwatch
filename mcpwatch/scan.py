@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""agentguard: static security scanner for MCP client configs and MCP tool manifests.
+"""mcpwatch: static security scanner for MCP client configs and MCP tool manifests.
 
 Usage:
-  python3 -m agentguard.scan CONFIG.json [--tools TOOLS.json] [--format text|json|md] [--badge out.svg] [--fail-on high]
+  python3 -m mcpwatch.scan CONFIG.json [--tools TOOLS.json] [--format text|json|md] [--badge out.svg] [--fail-on high]
 
 CONFIG.json: any MCP client config with an "mcpServers" (or "servers") object
 (Claude Desktop, Claude Code .mcp.json, Cursor, VS Code).
@@ -137,49 +137,49 @@ def scan_server(name, cfg):
     for where, items in (("env", as_dict(cfg.get("env"))), ("header", as_dict(cfg.get("headers")))):
         for k, v in items.items():
             if is_secret_literal(str(k), v):
-                add("AG001", "high", f"Plaintext secret in {where} {k} ({redact(v)}). Use an env reference or a secret store.")
+                add("MW001", "high", f"Plaintext secret in {where} {k} ({redact(v)}). Use an env reference or a secret store.")
     for a in args:
         flag_val = re.match(r"^--?[\w\-]*(key|token|secret|password|auth)[\w\-]*=(.+)$", a, re.I)
         if any(p.search(a) for p in SECRET_PATTERNS) or (flag_val and looks_like_value(flag_val.group(2))):
-            add("AG001", "high", f"Plaintext secret in command args ({redact(a)}). Visible in process lists.")
+            add("MW001", "high", f"Plaintext secret in command args ({redact(a)}). Visible in process lists.")
         if UNSAFE_FLAGS.match(a):
-            add("AG009", "high", f"Launched with '{a.split('=')[0]}', which turns off a safety control.")
+            add("MW009", "high", f"Launched with '{a.split('=')[0]}', which turns off a safety control.")
 
     if exe in RUNNERS:
         pkg = first_package(args)
         if pkg and not pkg_pinned(pkg):
-            add("AG002", "medium", f"Unpinned package '{pkg}' via {exe}: every launch runs whatever the registry serves. Pin a version.")
+            add("MW002", "medium", f"Unpinned package '{pkg}' via {exe}: every launch runs whatever the registry serves. Pin a version.")
     if exe in {"bash", "sh", "zsh", "cmd", "powershell", "pwsh"} and any(a in {"-c", "/c", "-Command"} for a in args):
-        add("AG008", "high", "Server launched through an inline shell command. Hard to audit; prefer a direct executable.")
+        add("MW008", "high", "Server launched through an inline shell command. Hard to audit; prefer a direct executable.")
     if re.search(r"(curl|wget)[^|]*\|\s*(ba|z)?sh", " ".join([cmd] + args)):
-        add("AG008", "critical", "Pipes a download straight into a shell.")
+        add("MW008", "critical", "Pipes a download straight into a shell.")
 
     if exe in {"docker", "podman"}:
         joined = " ".join(args)
         if "--privileged" in args or re.search(r"--cap-add[ =](SYS_ADMIN|ALL)\b", joined, re.I):
-            add("AG007", "critical", "Container runs privileged or with SYS_ADMIN/ALL capabilities: effectively host access.")
+            add("MW007", "critical", "Container runs privileged or with SYS_ADMIN/ALL capabilities: effectively host access.")
         if "/var/run/docker.sock" in joined or re.search(r"(-v|--volume)[ =]/:|(src|source)=/(,|\s|$)", joined):
-            add("AG007", "critical", "Container mounts the host root or the Docker socket.")
+            add("MW007", "critical", "Container mounts the host root or the Docker socket.")
         if re.search(r"--(network|net|pid|ipc)[ =]host\b", joined):
-            add("AG007", "medium", "Container shares the host network, PID or IPC namespace.")
+            add("MW007", "medium", "Container shares the host network, PID or IPC namespace.")
         for m in re.finditer(r"(?:-v|--volume)[ =]([^:\s]+):|(?:src|source)=([^,\s]+)", joined):
             host_path = m.group(1) or m.group(2)
             if host_path != "/" and BROAD_PATH.match(host_path):
-                add("AG006", "high", f"Container mounts a whole home directory ({host_path}).")
+                add("MW006", "high", f"Container mounts a whole home directory ({host_path}).")
 
     if any(BROAD_PATH.match(a) for a in args if exe not in {"docker", "podman"}):
-        add("AG006", "high", "Server is granted the filesystem root or a whole home directory. Scope it to a project folder.")
+        add("MW006", "high", "Server is granted the filesystem root or a whole home directory. Scope it to a project folder.")
 
     url = cfg.get("url") or cfg.get("serverUrl")
     if isinstance(url, str) and url:
         shown = safe_url(url)
         if url_secrets(url):
-            add("AG001", "high", f"Credentials embedded in the server URL ({shown}). They end up in logs and history.")
+            add("MW001", "high", f"Credentials embedded in the server URL ({shown}). They end up in logs and history.")
         if url.lower().startswith("http://") and not is_local(url):
-            add("AG004", "high", f"Remote server over plain HTTP ({shown}). Traffic and tokens can be intercepted.")
+            add("MW004", "high", f"Remote server over plain HTTP ({shown}). Traffic and tokens can be intercepted.")
         headers = {str(k).lower() for k in as_dict(cfg.get("headers"))}
         if not headers & {"authorization", "x-api-key", "api-key"} and not cfg.get("oauth") and not is_local(url) and not url_secrets(url):
-            add("AG005", "low", "Remote server configured without auth headers. Fine if it uses OAuth; otherwise anyone with the URL can call it.")
+            add("MW005", "low", "Remote server configured without auth headers. Fine if it uses OAuth; otherwise anyone with the URL can call it.")
     return f
 
 
@@ -200,16 +200,16 @@ def scan_tools(tools, server="(tools manifest)"):
         text = " ".join([str(t.get("description", "")), json.dumps(t.get("inputSchema", {}), ensure_ascii=False)])
         add = lambda rule, sev, msg: f.append({"server": server, "rule": rule, "severity": sev, "message": f"tool '{name}': {msg}"})
         if hidden_chars(text + name):
-            add("AG103", "critical", "contains invisible/tag Unicode characters, a common way to hide instructions from humans.")
+            add("MW103", "critical", "contains invisible/tag Unicode characters, a common way to hide instructions from humans.")
         m = INJECTION.search(text)
         if m:
-            add("AG101", "critical", f"description contains instruction-like text aimed at the model ('{m.group(0)[:60]}'). Possible tool poisoning.")
+            add("MW101", "critical", f"description contains instruction-like text aimed at the model ('{m.group(0)[:60]}'). Possible tool poisoning.")
         toks = name_tokens(name)
         if toks & DANGEROUS_TOKENS or {"run", "command"} <= toks:
             risky.append(name)
     if risky:  # one finding per server: an admin API with 13 delete tools is not 13x worse
         shown = ", ".join(risky[:5]) + (f" and {len(risky) - 5} more" if len(risky) > 5 else "")
-        f.append({"server": server, "rule": "AG102", "severity": "medium",
+        f.append({"server": server, "rule": "MW102", "severity": "medium",
                   "message": f"{len(risky)} tool(s) can execute commands or delete data ({shown}). Require confirmation before the agent calls them."})
     return f
 
@@ -232,10 +232,10 @@ BADGE_COLORS = {"A": "#2e7d32", "B": "#558b2f", "C": "#f9a825", "D": "#ef6c00", 
 
 def badge(grade):
     c = BADGE_COLORS[grade]
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="agentguard: {grade}">'
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="mcpwatch: {grade}">'
             f'<rect width="96" height="20" fill="#555"/><rect x="96" width="32" height="20" fill="{c}"/>'
             f'<g fill="#fff" font-family="Verdana,sans-serif" font-size="11" text-anchor="middle">'
-            f'<text x="48" y="14">agentguard</text><text x="112" y="14">{grade}</text></g></svg>')
+            f'<text x="48" y="14">mcpwatch</text><text x="112" y="14">{grade}</text></g></svg>')
 
 
 def md_cell(s):
@@ -251,8 +251,8 @@ def render(findings, fmt, n_servers):
     key = lambda x: -SEV_ORDER.index(x["severity"])
     if fmt == "md":
         rows = "\n".join(f"| {x['severity']} | {x['rule']} | {md_cell(x['server'])} | {md_cell(x['message'])} |" for x in sorted(findings, key=key))
-        return f"## agentguard: grade {grade} ({pts}/100), {n_servers} server(s)\n\n| Severity | Rule | Server | Finding |\n|---|---|---|---|\n{rows}\n"
-    lines = [f"agentguard grade {grade} ({pts}/100) across {n_servers} server(s), {len(findings)} finding(s)"]
+        return f"## mcpwatch: grade {grade} ({pts}/100), {n_servers} server(s)\n\n| Severity | Rule | Server | Finding |\n|---|---|---|---|\n{rows}\n"
+    lines = [f"mcpwatch grade {grade} ({pts}/100) across {n_servers} server(s), {len(findings)} finding(s)"]
     lines += [f"  [{x['severity'].upper():8}] {x['rule']} {x['server']}: {x['message']}" for x in sorted(findings, key=key)]
     return "\n".join(lines)
 
@@ -280,10 +280,10 @@ def main(argv=None):
                 data = json.load(fh)
             findings += scan_tools(data.get("tools", []) if isinstance(data, dict) else data)
     except (OSError, ValueError) as e:
-        print(f"agentguard: cannot read input: {e}", file=sys.stderr)
+        print(f"mcpwatch: cannot read input: {e}", file=sys.stderr)
         return 2
     if not servers and not a.tools:
-        print("agentguard: no MCP servers found in config (looked for mcpServers / servers / mcp.servers)", file=sys.stderr)
+        print("mcpwatch: no MCP servers found in config (looked for mcpServers / servers / mcp.servers)", file=sys.stderr)
         return 2
     print(render(findings, a.format, len(servers)))
     if a.badge:

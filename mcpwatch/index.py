@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the public agentguard index from the official MCP registry.
+"""Build the public mcpwatch index from the official MCP registry.
 
-  python3 -m agentguard.index --out site [--limit N] [--no-probe]
+  python3 -m mcpwatch.index --out site [--limit N] [--no-probe]
 
 Remote servers get a read-only MCP handshake + tools/list (no tool is ever called).
 Package servers get static checks only: third-party code is never run.
@@ -11,10 +11,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib, http.client, ipaddress, socket
 from urllib.parse import urlsplit
-from agentguard.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal
+from mcpwatch.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal
+from mcpwatch.watch import fingerprints, registry_keys, shard2, diff
 
 REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
-UA = "agentguard-index/0.1 (+https://github.com/anardimontlv/agentguard)"
+UA = "mcpwatch-index/0.1 (+https://github.com/anardimontlv/mcpwatch)"
 MAX_BYTES = 1_000_000
 esc = html.escape
 
@@ -147,7 +148,7 @@ def probe(url):
     dl = time.monotonic() + PROBE_DEADLINE
     try:
         init, sid = rpc(url, deadline=dl, body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "agentguard", "version": "0.1"}}})
+            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "mcpwatch", "version": "0.1"}}})
         if not init or "error" in init:
             return "down", []
         try:
@@ -166,29 +167,34 @@ def probe(url):
 def assess(s, do_probe=True):
     lst = lambda v: [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []  # registry data is untrusted
     name, findings, notes, tools = str(s.get("name") or "unnamed"), [], [], []
+    auth = "none"  # none: no probeable remote; open/auth/down: first definitive probe result wins
     for r in lst(s.get("remotes"))[:3]:  # cap per-server probe work
         url = r.get("url") if isinstance(r.get("url"), str) else ""
         hdrs = {str(h.get("name", "")): h.get("value", "") for h in lst(r.get("headers"))}
         cfg = {"url": url, "headers": hdrs}
         if any(h.get("isRequired") or h.get("isSecret") for h in lst(r.get("headers"))):
             cfg["headers"] = {**hdrs, "Authorization": "${declared}"}
-        f = [x for x in scan_server(name, cfg) if x["rule"] != "AG005"]  # AG005 decided by the live probe below
+        f = [x for x in scan_server(name, cfg) if x["rule"] != "MW005"]  # MW005 decided by the live probe below
         findings += f
         if do_probe and "{" not in url and url.startswith("http"):
             status, t = probe(url)
+            if auth in ("none", "down"):
+                auth = status
             notes.append(f"{safe_url(url)}: {'requires auth' if status == 'auth' else 'answers without auth' if status == 'open' else 'not reachable'}")
             if status == "open" and t:
-                findings.append({"server": name, "rule": "AG005", "severity": "low",
+                findings.append({"server": name, "rule": "MW005", "severity": "low",
                                  "message": f"Remote endpoint lists {len(t)} tool(s) to anyone, no credentials needed."})
                 tools = t
                 findings += scan_tools(t, name)
+    pk = {}
     for p in lst(s.get("packages")):
         ident, ver = str(p.get("identifier", "")), str(p.get("version", ""))
+        pk[ident[:100]] = ver[:40]
         if not ver or ver in {"latest", "*"}:
-            findings.append({"server": name, "rule": "AG002", "severity": "medium", "message": f"Package {ident} is published without a fixed version."})
+            findings.append({"server": name, "rule": "MW002", "severity": "medium", "message": f"Package {ident} is published without a fixed version."})
         for ev in lst(p.get("environmentVariables")):
             if ev.get("isSecret") and is_secret_literal("SECRET", str(ev.get("default") or "")):  # "guest"/"test" defaults are not leaks
-                findings.append({"server": name, "rule": "AG001", "severity": "high", "message": f"Secret env {ev.get('name')} ships with a default value."})
+                findings.append({"server": name, "rule": "MW001", "severity": "high", "message": f"Secret env {ev.get('name')} ships with a default value."})
         notes.append(f"{p.get('registryType', 'package')}: {ident}@{ver or '?'} (static checks only; code not executed)")
     # one finding per rule per message is enough for the public page
     uniq = list({(x["rule"], x["message"]): x for x in findings}.values())
@@ -196,7 +202,9 @@ def assess(s, do_probe=True):
     repo = s.get("repository") if isinstance(s.get("repository"), dict) else {}
     return {"name": name, "title": str(s.get("title") or name), "description": str(s.get("description", "")), "version": str(s.get("version", "")),
             "repo": str(repo.get("url", "")), "score": pts, "grade": grade, "findings": uniq,
-            "notes": notes, "tools": [str(t.get("name", "?")) for t in lst(tools)][:100]}
+            "notes": notes, "tools": [str(t.get("name", "?")) for t in lst(tools)][:100],
+            "auth": auth, "fp": fingerprints(lst(tools)) if auth == "open" else None, "pk": pk,
+            "keys": registry_keys(s), "tool_text": {str(t.get("name", "?")): str(t.get("description", ""))[:300] for t in lst(tools)}}
 
 
 def slug(name):
@@ -214,21 +222,21 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 6px;
 .gA{background:#2e7d32}.gB{background:#558b2f}.gC{background:#f9a825;color:#111}.gD{background:#ef6c00}.gF{background:#c62828}
 code,pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}pre{overflow-x:auto;background:var(--card);padding:12px;border-radius:8px;border:1px solid var(--line)}
 input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:1rem}
-.wrap{overflow-wrap:anywhere}"""
+.wrap{overflow-wrap:anywhere}.hi{color:#c62828;font-weight:600}"""
 
 
 def page(title, body, desc):
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><style>{CSS}</style></head>'
-            f'<body><main>{body}<p class="mut" style="margin-top:48px">agentguard: static and read-only checks. '
-            f'A grade is not a guarantee of safety. <a href="/">Index</a> · <a href="https://github.com/anardimontlv/agentguard">Scanner</a></p></main></body></html>')
+            f'<body><main>{body}<p class="mut" style="margin-top:48px">mcpwatch: static and read-only checks. '
+            f'A grade is not a guarantee of safety. <a href="/">Index</a> · <a href="/changes">Rug-pull radar</a> · <a href="https://github.com/anardimontlv/mcpwatch">Scanner</a></p></main></body></html>')
 
 
 def g(grade):
     return f'<span class="g g{grade}">{grade}</span>'
 
 
-BASE = os.environ.get("AG_BASE_URL", "https://agentguard-pi.vercel.app").rstrip("/")
+BASE = os.environ.get("MCPWATCH_URL", "https://www.mcpwatch.io").rstrip("/")
 GRADE_ORDER = "FDCBA"
 
 
@@ -241,7 +249,7 @@ def compact(r):
     return {"n": r["name"], "t": r["title"][:120], "d": r["description"][:400], "v": r["version"][:40],
             "r": r["repo"] if r["repo"].startswith("https://") else "", "s": r["score"], "g": r["grade"],
             "f": [[x["severity"], x["rule"], x["message"][:300]] for x in r["findings"][:20]],
-            "o": r["notes"][:6], "k": r["tools"][:30]}
+            "o": r["notes"][:6], "k": r["tools"][:30], "h": r.get("fp"), "a": r.get("auth"), "p": r.get("pk") or {}}
 
 
 SERVER_JS = """
@@ -258,9 +266,20 @@ r.f.forEach(f=>{const p=$('p',null,'wrap');p.append($('b',f[0]+' '+f[1]+': '),f[
 const c=$('div',null,'card');c.append($('h2','What was checked'));r.o.forEach(o=>c.append($('p',o,'wrap')));
 c.append($('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
 const b=$('div',null,'card');b.append($('h2','Maintainer? Add the badge'),
- $('pre','[![agentguard](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
+ $('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
 m.replaceChildren($('p',r.n+' · v'+r.v+' · score '+r.s+'/100','mut wrap'),h,$('p',r.d,'wrap'),k,c,b)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
+"""
+
+CHANGES_JS = """
+const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const box=document.getElementById('c');
+fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
+if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.'));return}
+days.forEach(d=>{const k=$('div',null,'card');k.append($('h2',d.date+' · '+d.items.length+' server(s) changed'));
+d.items.slice(0,200).forEach(it=>{const p=$('p',null,'wrap');const a=$('a',it.name);a.href='/s/'+it.slug;p.append(a,' — ');
+it.changes.forEach((c,i)=>{p.append($('span',(i?', ':'')+c.kind.replace('_',' ')+' '+c.detail,c.sev==='high'?'hi':''))});k.append(p)});
+box.append(k)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
 SEARCH_JS = """
@@ -274,7 +293,7 @@ const td=$('td',null,'wrap');td.append(a);const g=$('td');g.append($('span',x[2]
 """
 
 
-def write_site(results, out):
+def write_site(results, out, changes=None):
     os.makedirs(f"{out}/s", exist_ok=True)
     os.makedirs(f"{out}/d", exist_ok=True)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -290,6 +309,22 @@ def write_site(results, out):
             json.dump(v, fh, separators=(",", ":"))
     with open(f"{out}/list.json", "w", encoding="utf-8") as fh:
         json.dump(listing, fh, separators=(",", ":"))
+    os.makedirs(f"{out}/m", exist_ok=True)  # package/url -> slug, for `mcpwatch lock`
+    lookup = {}
+    for r in results:
+        for k in r.get("keys", []):
+            lookup.setdefault(shard2(k), {}).setdefault(k, slug(r["name"]))
+    for k, v in lookup.items():
+        with open(f"{out}/m/{k}.json", "w", encoding="utf-8") as fh:
+            json.dump(v, fh, separators=(",", ":"))
+    with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
+        json.dump(changes or [], fh, separators=(",", ":"))
+    with open(f"{out}/changes.html", "w", encoding="utf-8") as fh:
+        fh.write(page("MCP rug-pull radar: tool changes across every public MCP server",
+                      "<p><a href='/'>← All servers</a></p><h1>Rug-pull radar</h1><p>Every public MCP server is fingerprinted daily. "
+                      "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p>"
+                      "<div id='c'><p>Loading…</p></div>" f"<script>{CHANGES_JS}</script>",
+                      "Daily feed of MCP tool changes (possible rug pulls) across every server in the official registry."))
 
     # static, crawlable pages only where there is something to say (grade below A); /s/<slug> covers the rest
     for sl, r in notable:
@@ -297,7 +332,7 @@ def write_site(results, out):
                        for x in r["findings"])
         notes = "".join(f"<li class='wrap'>{esc(n)}</li>" for n in r["notes"])
         tools = ", ".join(esc(t) for t in r["tools"][:30]) or "not listed publicly"
-        md = f"[![agentguard]({BASE}/badge/{sl}.svg)]({BASE}/s/{sl})"
+        md = f"[![mcpwatch]({BASE}/badge/{sl}.svg)]({BASE}/s/{sl})"
         body = (f"<p><a href='/'>← All servers</a></p><h1 class='wrap'>{esc(r['title'])} {g(r['grade'])}</h1>"
                 f"<p class='mut wrap'>{esc(r['name'])} · v{esc(r['version'])} · score {r['score']}/100 · checked {now}</p>"
                 f"<p class='wrap'>{esc(r['description'][:600])}</p>"
@@ -307,30 +342,30 @@ def write_site(results, out):
                 f"<div class='card'><h2>Maintainer? Fix, then add the badge</h2><p>Grades refresh daily.</p><pre class='wrap'>{esc(md)}</pre></div>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"Is {r['title']} MCP server safe? Grade {r['grade']}", body,
-                          f"agentguard security grade {r['grade']} for the {r['title']} MCP server: findings, auth, tools."))
+                          f"mcpwatch security grade {r['grade']} for the {r['title']} MCP server: findings, auth, tools."))
     with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
-        fh.write(page("MCP server security grade: agentguard", "<p><a href='/'>← All servers</a></p><div id='m'><p>Loading…</p></div>"
-                      f"<script>{SERVER_JS.replace('BASE', BASE)}</script>", "agentguard security grade for an MCP server."))
+        fh.write(page("MCP server security grade: mcpwatch", "<p><a href='/'>← All servers</a></p><div id='m'><p>Loading…</p></div>"
+                      f"<script>{SERVER_JS.replace('BASE', BASE)}</script>", "mcpwatch security grade for an MCP server."))
 
     counts = {k: sum(r["grade"] == k for r in results) for k in "ABCDF"}
-    open_n = sum(any(x["rule"] == "AG005" for x in r["findings"]) for r in results)
+    open_n = sum(any(x["rule"] == "MW005" for x in r["findings"]) for r in results)
     worst = sorted(notable, key=lambda x: (x[1]["score"], x[1]["name"]))[:100]
     rows = "".join(f"<tr><td>{g(r['grade'])}</td><td class='wrap'><a href='/s/{sl}'>{esc(r['title'])}</a>"
                    f"<br><span class='mut'>{esc(r['name'])}</span></td><td>{len(r['findings'])}</td></tr>" for sl, r in worst)
     body = (f"<h1>Is your AI agent's MCP server safe?</h1>"
-            f"<p>agentguard grades every server in the official MCP registry for leaked secrets, plain-HTTP endpoints, "
+            f"<p>mcpwatch grades every server in the official MCP registry for leaked secrets, plain-HTTP endpoints, "
             f"unauthenticated tools and poisoned tool descriptions. Updated daily. Last run {now}.</p>"
             f"<div class='card'><b>{len(results):,}</b> servers · " + " · ".join(f"{g(k)} {v:,}" for k, v in counts.items())
             + f" · <b>{open_n:,}</b> list tools to anyone without auth</div>"
-            f"<div class='card'><h2>Scan your own config, free</h2><pre>git clone https://github.com/anardimontlv/agentguard &amp;&amp; cd agentguard\n"
-            f"python3 -m agentguard.scan ~/.cursor/mcp.json</pre><p class='mut'>Works on Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs. "
+            f"<div class='card'><h2>Scan your own config, free</h2><pre>git clone https://github.com/anardimontlv/mcpwatch &amp;&amp; cd mcpwatch\n"
+            f"python3 -m mcpwatch.scan ~/.cursor/mcp.json</pre><p class='mut'>Works on Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs. "
             f"Runs locally; nothing leaves your machine.</p></div>"
             f"<input id='q' placeholder='Search {len(results):,} servers…' aria-label='Search servers'>"
             f"<table><tbody id='res'></tbody></table>"
             f"<h2>Lowest grades today</h2><table><thead><tr><th>Grade</th><th>Server</th><th>Findings</th></tr></thead><tbody>{rows}</tbody></table>"
             f"<script>{SEARCH_JS}</script>")
     with open(f"{out}/index.html", "w", encoding="utf-8") as fh:
-        fh.write(page("MCP Server Security Index: agentguard", body, "Daily security grades for every MCP server in the official registry."))
+        fh.write(page("MCP Server Security Index: mcpwatch", body, "Daily security grades for every MCP server in the official registry."))
     with open(f"{out}/stats.json", "w", encoding="utf-8") as fh:
         json.dump({"generated": now, "servers": len(results), "grades": counts, "open": open_n,
                    "rules": {k: sum(x["rule"] == k for r in results for x in r["findings"]) for k in
@@ -343,17 +378,63 @@ def write_site(results, out):
         fh.write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\n")
 
 
+def load_prev(d):
+    prev = {}
+    for f in os.listdir(d) if os.path.isdir(d) else []:
+        if f.endswith(".json"):
+            try:
+                with open(os.path.join(d, f), encoding="utf-8") as fh:
+                    prev.update(json.load(fh))
+            except (OSError, ValueError):
+                pass  # a corrupt shard only loses change detection for its servers
+    return prev
+
+
+def track_changes(results, prev):
+    """Diff each server against yesterday; servers unreachable today keep yesterday's fingerprints."""
+    items = []
+    for r in results:
+        old = prev.get(slug(r["name"]))
+        if not old:
+            continue
+        if r["fp"] is None and old.get("h") and r["auth"] in ("down", "none"):
+            r["fp"] = old["h"]  # unknown is not "all tools removed"
+        cur = {"h": r["fp"], "a": r["auth"] if r["auth"] != "down" else old.get("a"), "g": r["grade"], "p": r["pk"]}
+        ch = diff(old, cur)
+        if ch:
+            text = {c["detail"]: r["tool_text"].get(c["detail"], "") for c in ch if c["kind"] in ("tool_changed", "tool_added")}
+            items.append({"slug": slug(r["name"]), "name": r["name"], "changes": ch, "new_text": text})
+    items.sort(key=lambda x: -sum(c["sev"] == "high" for c in x["changes"]))
+    return items
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="site")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--no-probe", action="store_true")
+    ap.add_argument("--prev", help="previous site's d/ shard dir, for change detection")
+    ap.add_argument("--history", help="dir of daily change files (the history branch checkout)")
     a = ap.parse_args(argv)
     servers = fetch_registry(a.limit)
     print(f"registry: {len(servers)} active servers", file=sys.stderr)
     with ThreadPoolExecutor(48) as ex:
         results = list(ex.map(lambda s: assess(s, not a.no_probe), servers))
-    write_site(results, a.out)
+    prev = load_prev(a.prev) if a.prev else {}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    items = track_changes(results, prev)
+    changes = []
+    if a.history:
+        os.makedirs(a.history, exist_ok=True)
+        if prev:  # first run only sets the baseline
+            with open(f"{a.history}/{today}.json", "w", encoding="utf-8") as fh:
+                json.dump(items, fh, separators=(",", ":"))
+        days = sorted(f for f in os.listdir(a.history) if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.json", f))[-14:]
+        for f in reversed(days):
+            with open(f"{a.history}/{f}", encoding="utf-8") as fh:
+                changes.append({"date": f[:10], "items": json.load(fh)})
+    print(f"changes: {len(items)} server(s) changed since last run", file=sys.stderr)
+    write_site(results, a.out, changes)
     print(f"indexed {len(results)} servers into {a.out}/", file=sys.stderr)
 
 
