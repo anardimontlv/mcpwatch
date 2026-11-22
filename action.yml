@@ -8,7 +8,8 @@ runs:
   using: composite
   steps:
     - shell: bash
-      env: { AG_CONFIG: "${{ inputs.config }}", AG_FAIL: "${{ inputs.fail-on }}", PYTHONPATH: "${{ github.action_path }}" }
-      # GitHub's bash shell runs with pipefail, so tee does not hide the scanner's exit code
+      env: { AG_CONFIG: "${{ inputs.config }}", AG_FAIL: "${{ inputs.fail-on }}", AG_SCRIPT: "${{ github.action_path }}/agentguard/scan.py" }
+      # -I keeps the scanned repo off sys.path (it could ship its own agentguard/ to hijack imports).
+      # GitHub's bash shell runs with pipefail, so tee does not hide the scanner's exit code.
       run: |
-        python3 -m agentguard.scan "$AG_CONFIG" --format md --fail-on "$AG_FAIL" | tee -a "$GITHUB_STEP_SUMMARY"
+        python3 -I "$AG_SCRIPT" "$AG_CONFIG" --format md --fail-on "$AG_FAIL" | tee -a "$GITHUB_STEP_SUMMARY"
