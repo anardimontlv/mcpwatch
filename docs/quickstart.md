@@ -6,7 +6,7 @@ Three steps, about two minutes:
 2. **lock** the tool fingerprints your servers expose today into `mcpwatch.lock`.
 3. **check** later. It fails when any pinned tool changes.
 
-Requirements: Python 3.9 or later. No packages to install. `lock` and `check` need HTTPS access to the public index.
+Requirements: Python 3.10 or later. No packages to install. `lock` and `check` need HTTPS access to the public index.
 
 ## 1. Get the code
 

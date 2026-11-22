@@ -1,7 +1,7 @@
 # mcpwatch MCP server
 
 Lets your coding agent ask mcpwatch "is this MCP server safe, and has it changed?" before it connects.
-Python 3.9+ standard library only. Transport: stdio. Protocol version 2025-06-18.
+Python 3.10+ standard library only. Transport: stdio. Protocol version 2025-06-18.
 
 ## Tools
 

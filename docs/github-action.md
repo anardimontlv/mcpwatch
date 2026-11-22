@@ -6,7 +6,7 @@ The action `anardimontlv/mcpwatch` has two modes:
 - `check`: compares the config against `mcpwatch.lock` using the public index. Use it on a schedule.
 
 It is a composite action. It runs `python3` from the runner, so use `ubuntu-latest` (or any runner with
-Python 3.9+ and bash). It installs nothing.
+Python 3.10+ and bash). It installs nothing.
 
 ## Inputs
 

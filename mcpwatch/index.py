@@ -509,7 +509,7 @@ def write_site(results, out, changes=None):
             f"<div class='stat'><b>{now}</b><span>last run (UTC)</span></div></div>"
             f"<div class='dist' aria-hidden='true'>{dist}</div><ul class='legend'>"
             + "".join(f"<li>{g(k)} {v:,}</li>" for k, v in counts.items()) + "</ul></section>"
-            f"<h2>Quickstart</h2><p class='mut'>Zero dependencies, Python 3.9+. Works with Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs.</p>"
+            f"<h2>Quickstart</h2><p class='mut'>Zero dependencies, Python 3.10+. Works with Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs.</p>"
             f"<pre>pipx install git+{GH}</pre><ol class='steps'>"
             + "".join(f"<li><h3>{t}</h3><p class='mut sm'>{d}</p><pre>{esc(c)}</pre></li>" for t, d, c in steps) + "</ol>"
             f"<p class='sm'><a href='{GH}#github-action'>Run it as a GitHub Action →</a></p>"

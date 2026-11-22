@@ -8,7 +8,7 @@ the tools of every publicly reachable remote server, grades each server, and fai
 
 - **Static and read-only.** It never runs third-party server code and never calls a tool.
 - **Private by default.** Your config never leaves your machine; the CLI only downloads public index files.
-- **Zero dependencies.** Python 3.9+ standard library.
+- **Zero dependencies.** Python 3.10+ standard library.
 
 Live index and rug-pull radar: **https://www.mcpwatch.io**
 
