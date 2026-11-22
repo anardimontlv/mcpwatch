@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcpwatch-io"
-version = "0.2.1"
+version = "0.2.2"
 description = "Know when the tools your AI agents trust change: MCP config scanner and tool drift checks."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -19,6 +19,7 @@ Source = "https://github.com/anardimontlv/mcpwatch"
 mcpwatch = "mcpwatch.watch:main"
 mcpwatch-scan = "mcpwatch.scan:main"
 mcpwatch-mcp = "mcpwatch.mcp_server:main"
+mcpwatch-io = "mcpwatch.mcp_server:main"  # `uvx mcpwatch-io` starts the MCP server (registry launch convention)
 
 [tool.setuptools]
 packages = ["mcpwatch"]

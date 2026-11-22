@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.anardimontlv/mcpwatch",
+  "title": "mcpwatch",
+  "description": "Check MCP servers' security grades and tool changes before your agent connects. Read-only.",
+  "repository": {
+    "url": "https://github.com/anardimontlv/mcpwatch",
+    "source": "github"
+  },
+  "websiteUrl": "https://www.mcpwatch.io",
+  "version": "0.2.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "mcpwatch-io",
+      "version": "0.2.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
