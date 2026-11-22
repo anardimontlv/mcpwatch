@@ -1,0 +1,14 @@
+name: agentguard MCP scan
+description: Scan MCP server configs for leaked secrets, unpinned packages, over-broad access and tool poisoning.
+branding: { icon: shield, color: green }
+inputs:
+  config: { description: Path to MCP config (.mcp.json, mcp.json, claude_desktop_config.json), default: .mcp.json }
+  fail-on: { description: Fail the job at this severity or above (low|medium|high|critical), default: high }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env: { AG_CONFIG: "${{ inputs.config }}", AG_FAIL: "${{ inputs.fail-on }}", PYTHONPATH: "${{ github.action_path }}" }
+      # GitHub's bash shell runs with pipefail, so tee does not hide the scanner's exit code
+      run: |
+        python3 -m agentguard.scan "$AG_CONFIG" --format md --fail-on "$AG_FAIL" | tee -a "$GITHUB_STEP_SUMMARY"
