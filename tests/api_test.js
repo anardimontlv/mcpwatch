@@ -54,9 +54,6 @@ function fakeSql(q, p) {
   }
   if (q.includes("INSERT INTO tokens")) {
     const [uid, kind, h, ttl] = p;
-    const mine = db.tokens.filter((t) => t.user_id === uid && t.kind === kind).sort((a, b) => b.seq - a.seq);
-    const drop = new Set(mine.slice(L.TOKENS_PER_KIND - 1));
-    db.tokens = db.tokens.filter((t) => !drop.has(t));
     db.tokens.push({ user_id: uid, kind, hash: h, seq: ++db.seq, expires_at: now + Number(/^(\d+) days$/.exec(ttl)[1]) * 86400e3 });
     return [];
   }
@@ -313,17 +310,13 @@ test("tokens expire: manage after 30 days, unsubscribe after 90", async () => {
   assert.equal(db.users.length, 1);
 });
 
-test("at most 20 live tokens per user and kind: the oldest are dropped", async () => {
+test("requesting many new links never evicts a user's older, unexpired links", async () => {
   const first = await signUp("cap@example.com", [KNOWN[0]]);
   const uid = db.users[0].id;
-  const toks = [];
-  for (let i = 0; i < 24; i++) toks.push(await L.issueToken(uid, "manage"));
-  assert.equal(db.tokens.filter((t) => t.kind === "manage").length, L.TOKENS_PER_KIND);
-  assert.equal(db.tokens.filter((t) => t.kind === "unsub").length, 1, "other kind untouched");
+  for (let i = 0; i < 40; i++) await L.issueToken(uid, "manage"); // e.g. an attacker spamming email_link
+  assert.equal((await call(manage, { body: { token: first, action: "list" } })).status, 200);
+  db.now += 31 * 864e5; // ...until it expires on its own
   assert.equal((await call(manage, { body: { token: first, action: "list" } })).status, 403);
-  assert.equal((await call(manage, { body: { token: toks[3], action: "list" } })).status, 403);
-  assert.equal((await call(manage, { body: { token: toks[4], action: "list" } })).status, 200);
-  assert.equal((await call(manage, { body: { token: toks[23], action: "list" } })).status, 200);
 });
 
 test("a failed email send still returns the generic success", async () => {

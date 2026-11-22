@@ -88,14 +88,12 @@ const newToken = () => crypto.randomBytes(32).toString("base64url");
 const hash = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 
 const TOKEN_TTL = { manage: "30 days", unsub: "90 days" };
-const TOKENS_PER_KIND = 20;
-// Stores only the hash. Keeps the newest TOKENS_PER_KIND per user and kind (the DELETE's snapshot excludes the new row).
+// Stores only the hash. No per-user cap on purpose: a cap would let anyone who knows an address push that user's real,
+// older links out by requesting new ones. Growth is bounded by the mail rate limit and expiry + pruning.
 async function issueToken(userId, kind) {
   const t = newToken();
-  await sql(
-    `WITH ins AS (INSERT INTO tokens (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + $4::interval))
-     DELETE FROM tokens WHERE hash IN (SELECT hash FROM tokens WHERE user_id = $1 AND kind = $2
-       ORDER BY created_at DESC, hash OFFSET ${TOKENS_PER_KIND - 1})`, [userId, kind, hash(t), TOKEN_TTL[kind]]);
+  await sql(`INSERT INTO tokens (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + $4::interval)`,
+    [userId, kind, hash(t), TOKEN_TTL[kind]]);
   return t;
 }
 // The user behind an unexpired token of exactly this kind, or undefined.
@@ -203,5 +201,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, unsubLink, issueToken, tokenUser, deleteByToken, TOKENS_PER_KIND, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };

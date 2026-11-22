@@ -23,7 +23,7 @@ class FakeDB:
         if q.startswith("SELECT u.id, u.email"):
             wanted = set(json.loads(params[0]))
             return [{"id": self.ids[e], "email": e, "slug": s} for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
-        if q.startswith("WITH ins AS (INSERT INTO tokens") and "'unsub'" in q:
+        if q.startswith("INSERT INTO tokens") and "'unsub'" in q:
             self.unsub.setdefault(params[0], []).append(params[1])  # older tokens are kept, not replaced
             return []
         if q.startswith("DELETE FROM tokens WHERE expires_at < now()"):

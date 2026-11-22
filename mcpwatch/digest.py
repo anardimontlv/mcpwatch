@@ -51,10 +51,9 @@ def recipients(items, query):
     return out, ids
 
 
-# same as api/_lib.js issueToken: hash-only storage, 90-day unsubscribe tokens, newest 20 per user and kind kept
-ISSUE_UNSUB = ("WITH ins AS (INSERT INTO tokens (user_id, kind, hash, expires_at) VALUES ($1, 'unsub', $2, now() + interval '90 days')) "
-               "DELETE FROM tokens WHERE hash IN (SELECT hash FROM tokens WHERE user_id = $1 AND kind = 'unsub' "
-               "ORDER BY created_at DESC, hash OFFSET 19)")
+# same as api/_lib.js issueToken: hash-only storage, 90-day unsubscribe tokens, no cap (a cap would let others evict
+# a user's older links); expired rows are pruned on every run
+ISSUE_UNSUB = "INSERT INTO tokens (user_id, kind, hash, expires_at) VALUES ($1, 'unsub', $2, now() + interval '90 days')"
 
 
 def render(date, items, unsub_url):
