@@ -177,17 +177,29 @@ function send(res, status, obj) {
 
 // Static HTML for link landings; `text` is a constant chosen by the handler, never request data.
 // `button`: a button that /watch.js (same-origin static script) wires to POST the URL's token as JSON.
+const PAGE_CSS = ":root{--bg:#fff;--fg:#0e1417;--mut:#55616b;--line:#e2e8ec;--acc:#0f766e;--on:#fff}" +
+  "@media (prefers-color-scheme:dark){:root{--bg:#0b0f12;--fg:#e6edf0;--mut:#9aa7b0;--line:#1f2a30;--acc:#2dd4bf;--on:#04201d}}" +
+  "body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,sans-serif}" +
+  "header{border-bottom:1px solid var(--line)}header a{display:inline-flex;gap:8px;align-items:center;padding:16px;color:var(--fg);font-weight:700;text-decoration:none}" +
+  "main{max-width:560px;margin:48px auto;padding:0 16px}h1{font-size:1.8rem;line-height:1.2}p{color:var(--mut)}a{color:var(--acc)}" +
+  "button{font:inherit;font-weight:600;min-height:44px;padding:0 18px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:var(--on);cursor:pointer}" +
+  "button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}";
+const MARK = `<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#0f766e"/>` +
+  `<circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="30 11"/><path d="M12 12l5-4" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+// Static HTML for link landings; `text` is a constant chosen by the handler, never request data.
+// `button`: a button that /watch.js (same-origin static script) wires to POST the URL's token as JSON.
 function htmlPage(res, status, title, text, button) {
   res.statusCode = status;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<meta name="robots" content="noindex"><title>${title}: mcpwatch</title></head>` +
-    `<body style="font:16px/1.6 system-ui,sans-serif;max-width:560px;margin:64px auto;padding:0 16px"><h1>${title}</h1><p>${text}</p>` +
-    (button ? `<p><button type="button" id="link-btn" style="font:inherit;padding:10px 18px">${button}</button></p><p id="link-msg" aria-live="polite"></p>` +
+    `<meta name="robots" content="noindex"><title>${title}: mcpwatch</title><style>${PAGE_CSS}</style></head>` +
+    `<body><header><a href="/">${MARK}mcpwatch</a></header><main><h1>${title}</h1><p>${text}</p>` +
+    (button ? `<p><button type="button" id="link-btn">${button}</button></p><p id="link-msg" aria-live="polite"></p>` +
       `<script src="/watch.js"></script>` : "") +
-    `<p><a href="/watch">Back to mcpwatch</a></p></body></html>`);
+    `<p><a href="/watch">Back to mcpwatch</a></p></main></body></html>`);
 }
 
 // Wraps a handler: maps HttpError to JSON, everything else to a generic 500 (no user data in logs).
