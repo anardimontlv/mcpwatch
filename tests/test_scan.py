@@ -117,5 +117,38 @@ class IndexTest(unittest.TestCase):
             assess(s, do_probe=False)
 
 
+class ProbeSafetyTest(unittest.TestCase):
+    def test_ssrf_blocked(self):
+        from agentguard.index import public_host, probe
+        for u in ("http://169.254.169.254/x", "http://127.0.0.1/mcp", "http://10.0.0.5/mcp", "http://[::1]/mcp", "file:///etc/passwd"):
+            self.assertFalse(public_host(u), u)
+        self.assertEqual(probe("http://169.254.169.254/mcp"), ("down", []))
+
+    def test_slow_drip_hits_deadline(self):
+        import threading, time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from agentguard.index import rpc
+
+        class Drip(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b":"); self.wfile.flush(); time.sleep(0.25)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), Drip)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        t0 = time.monotonic()
+        with self.assertRaises(TimeoutError):  # rpc() itself, bypassing public_host, to exercise the read loop
+            rpc(f"http://127.0.0.1:{srv.server_port}/mcp", {"jsonrpc": "2.0", "id": 1, "method": "x"}, deadline=time.monotonic() + 1)
+        self.assertLess(time.monotonic() - t0, 3)
+        srv.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()

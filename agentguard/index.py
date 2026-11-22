@@ -9,7 +9,8 @@ Package servers get static checks only: third-party code is never run.
 import argparse, html, json, os, re, sys, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-import hashlib
+import hashlib, ipaddress, socket
+from urllib.parse import urlsplit
 from agentguard.scan import scan_server, scan_tools, score, badge, safe_url
 
 REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
@@ -48,42 +49,82 @@ def fetch_registry(limit=None):
             return list(out.values())[:limit] if limit else list(out.values())
 
 
-def rpc(url, body, session=None, timeout=8):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None  # a redirect could point at an internal address we never vetted
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+PROBE_DEADLINE = 20  # seconds for the whole handshake, however slowly a server drips bytes
+
+
+def public_host(url):
+    """True only if every address the host resolves to is public (blocks SSRF to metadata/private ranges)."""
+    try:
+        p = urlsplit(url)
+        if p.scheme not in ("http", "https") or not p.hostname:
+            return False
+        infos = socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+        # shortcut: DNS could change between this check and the connect (rebinding); pin the IP if this ever runs with secrets
+        return bool(infos) and all(ipaddress.ip_address(i[4][0].split("%")[0]).is_global for i in infos)
+    except (OSError, ValueError):
+        return False
+
+
+def rpc(url, body, session=None, timeout=8, deadline=None):
     headers = {"User-Agent": UA, "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                "MCP-Protocol-Version": "2025-06-18"}
     if session:
         headers["Mcp-Session-Id"] = session
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read(MAX_BYTES).decode("utf-8", "replace")
+    deadline = deadline or time.monotonic() + PROBE_DEADLINE
+    with _opener.open(req, timeout=timeout) as r:
+        buf = b""
+        while len(buf) < MAX_BYTES:
+            if time.monotonic() > deadline:
+                raise TimeoutError("probe deadline exceeded")
+            chunk = r.read1(16384) if hasattr(r, "read1") else r.read(16384)
+            if not chunk:
+                break
+            buf += chunk
+            if b"data:" in buf and sse_response(buf.decode("utf-8", "replace")):
+                break  # SSE streams may stay open after answering; stop once we have the response
+        raw = buf[:MAX_BYTES].decode("utf-8", "replace")
         sid = r.headers.get("Mcp-Session-Id") or session
     if not raw.strip():
         return None, sid
     if raw.lstrip().startswith("{"):
         return json.loads(raw), sid
-    for line in raw.splitlines():  # SSE: take the first data line that is our JSON-RPC response
+    return sse_response(raw), sid
+
+
+def sse_response(raw):
+    for line in raw.splitlines():  # first complete data line that is a JSON-RPC response
         if line.startswith("data:"):
             try:
                 msg = json.loads(line[5:].strip())
             except json.JSONDecodeError:
                 continue
-            if "result" in msg or "error" in msg:
-                return msg, sid
-    return None, sid
+            if isinstance(msg, dict) and ("result" in msg or "error" in msg):
+                return msg
+    return None
 
 
 def probe(url):
     """Return (status, tools). status: 'auth' | 'open' | 'down'."""
+    if not public_host(url):
+        return "down", []
+    dl = time.monotonic() + PROBE_DEADLINE
     try:
-        init, sid = rpc(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        init, sid = rpc(url, deadline=dl, body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "agentguard", "version": "0.1"}}})
         if not init or "error" in init:
             return "down", []
         try:
-            rpc(url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
+            rpc(url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, sid, deadline=dl)
         except urllib.error.HTTPError:
             pass  # many servers answer 202/4xx to notifications; tools/list is what matters
-        res, _ = rpc(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, sid)
+        res, _ = rpc(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, sid, deadline=dl)
         tools = (res or {}).get("result", {}).get("tools", [])
         return "open", tools if isinstance(tools, list) else []
     except urllib.error.HTTPError as e:
@@ -95,7 +136,7 @@ def probe(url):
 def assess(s, do_probe=True):
     lst = lambda v: [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []  # registry data is untrusted
     name, findings, notes, tools = str(s.get("name") or "unnamed"), [], [], []
-    for r in lst(s.get("remotes")):
+    for r in lst(s.get("remotes"))[:3]:  # cap per-server probe work
         url = r.get("url") if isinstance(r.get("url"), str) else ""
         hdrs = {str(h.get("name", "")): h.get("value", "") for h in lst(r.get("headers"))}
         cfg = {"url": url, "headers": hdrs}
