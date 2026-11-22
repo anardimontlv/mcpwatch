@@ -310,10 +310,13 @@ def write_site(results, out, changes=None):
     with open(f"{out}/list.json", "w", encoding="utf-8") as fh:
         json.dump(listing, fh, separators=(",", ":"))
     os.makedirs(f"{out}/m", exist_ok=True)  # package/url -> slug, for `mcpwatch lock`
-    lookup = {}
+    claims = {}
     for r in results:
-        for k in r.get("keys", []):
-            lookup.setdefault(shard2(k), {}).setdefault(k, slug(r["name"]))
+        for k in set(r.get("keys", [])):
+            claims.setdefault(k, []).append(slug(r["name"]))
+    lookup = {}
+    for k, sls in claims.items():  # a key claimed twice is ambiguous: never silently pick one (squatting)
+        lookup.setdefault(shard2(k), {})[k] = sls[0] if len(sls) == 1 else sorted(sls)
     for k, v in lookup.items():
         with open(f"{out}/m/{k}.json", "w", encoding="utf-8") as fh:
             json.dump(v, fh, separators=(",", ":"))

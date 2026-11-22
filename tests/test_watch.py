@@ -27,6 +27,35 @@ class DiffTest(unittest.TestCase):
         self.assertNotEqual(a, c)
 
 
+class FailClosedTest(unittest.TestCase):
+    def test_auth_added_and_lost_fingerprints_are_drift(self):
+        old = {"h": {"t": "aaa"}, "a": "open"}
+        kinds = {c["kind"]: c["sev"] for c in diff(old, {"h": None, "a": "auth"})}
+        self.assertEqual(kinds, {"fingerprints_lost": "medium", "auth_added": "medium"})
+
+    def test_outage_fails_closed(self):
+        import urllib.error
+        from mcpwatch import watch
+        def boom(path):
+            raise urllib.error.URLError("down")
+        orig, watch.fetch = watch.fetch, boom
+        self.addCleanup(setattr, watch, "fetch", orig)
+        with tempfile.TemporaryDirectory() as d:
+            cfg = f"{d}/c.json"
+            json.dump({"mcpServers": {"x": {"url": "https://x.example.com/mcp"}}}, open(cfg, "w"))
+            self.assertEqual(watch.main(["check", cfg, "--lock", f"{d}/l"]), 2)
+
+    def test_ambiguous_key_is_not_pinned(self):
+        from mcpwatch import watch
+        from mcpwatch.watch import shard2
+        k = "url:https://x.example.com/mcp"
+        orig, watch.fetch = watch.fetch, lambda path: {k: ["a-11111111", "b-22222222"]}
+        self.addCleanup(setattr, watch, "fetch", orig)
+        snap = watch.snapshot({"x": {"url": "https://x.example.com/mcp"}})
+        self.assertIsNone(snap["x"]["slug"])
+        self.assertIn("refusing to guess", snap["x"]["ambiguous"])
+
+
 class KeyTest(unittest.TestCase):
     def test_config_matches_registry(self):
         reg = {"remotes": [{"url": "https://Mcp.Example.com/mcp/"}],

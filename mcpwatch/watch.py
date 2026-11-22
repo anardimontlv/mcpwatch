@@ -8,12 +8,13 @@ Fingerprints come from the public daily index (one hash per tool over its descri
 schema), so nothing is executed and nothing about your config is uploaded: the CLI only downloads
 public index shards. Exit codes: 0 no drift, 1 drift, 2 bad input.
 """
-import argparse, hashlib, json, os, re, shlex, sys, urllib.request
+import argparse, hashlib, json, os, re, shlex, sys, urllib.error, urllib.request
 from urllib.parse import urlsplit
 
 BASE = os.environ.get("MCPWATCH_URL", "https://www.mcpwatch.io").rstrip("/")
 DRIFT_SEV = {"tool_changed": "high", "auth_dropped": "high", "tool_added": "medium", "tool_removed": "medium",
-             "grade_changed": "medium", "package_changed": "low", "auth_added": "low"}
+             "grade_changed": "medium", "package_changed": "low", "auth_added": "medium",  # auth can hide later tool changes
+             "fingerprints_lost": "medium", "gone": "high"}
 
 
 # ---- fingerprints and lookup keys (shared with the indexer) ----
@@ -96,6 +97,8 @@ def diff(prev, cur):
     out = []
     add = lambda kind, detail: out.append({"kind": kind, "sev": DRIFT_SEV[kind], "detail": detail})
     ph, ch = prev.get("h"), cur.get("h")
+    if ph and not ch and cur.get("a") not in ("down", "none"):
+        add("fingerprints_lost", "tools are no longer publicly verifiable")
     if ph and ch and cur.get("a") == "open":
         for t in sorted(set(ph) & set(ch)):
             if ph[t] != ch[t]:
@@ -125,15 +128,24 @@ def fetch(path):
         return json.loads(r.read(20_000_000))
 
 
+class Ambiguous(Exception):
+    pass
+
+
 def resolve(keys, cache):
+    """(slug, record) or (None, None) if not indexed. Fetch errors propagate: a security check must fail closed."""
     for k in keys:
         sh = shard2(k)
         if ("m", sh) not in cache:
             try:
                 cache[("m", sh)] = fetch(f"m/{sh}.json")
-            except Exception:
+            except urllib.error.HTTPError as e:
+                if e.code != 404:  # 404 = no key in this shard; anything else is an outage, not "not indexed"
+                    raise
                 cache[("m", sh)] = {}
         sl = cache[("m", sh)].get(k)
+        if isinstance(sl, list):
+            raise Ambiguous(f"{k} is claimed by {len(sl)} registry entries ({', '.join(sl[:3])}); refusing to guess")
         if sl:
             if ("d", sl[-8:-6]) not in cache:
                 cache[("d", sl[-8:-6])] = fetch(f"d/{sl[-8:-6]}.json")
@@ -148,7 +160,11 @@ def snapshot(servers):
     for name, cfg in servers.items():
         if not isinstance(cfg, dict):
             continue
-        sl, rec = resolve(config_keys(cfg), cache)
+        try:
+            sl, rec = resolve(config_keys(cfg), cache)
+        except Ambiguous as e:
+            out[name] = {"slug": None, "ambiguous": str(e)}
+            continue
         out[name] = {"slug": sl, "name": rec.get("n"), "h": rec.get("h"), "a": rec.get("a"), "g": rec.get("g"), "p": rec.get("p")} if rec else {"slug": None}
     return out
 
@@ -180,8 +196,9 @@ def main(argv=None):
             json.dump({"version": 1, "servers": now}, fh, indent=2, sort_keys=True)
         pinned = sum(1 for r in now.values() if r.get("h"))
         print(f"mcpwatch: locked {len(now)} server(s) to {a.lock}; {pinned} with tool fingerprints")
-        if unindexed:
-            print(f"  not in the public index (private or local): {', '.join(unindexed)}")
+        for n in unindexed:
+            why = now[n].get("ambiguous") or "not in the public index (private or local server)"
+            print(f"  not pinned: {n}: {why}")
         return 0
     try:
         with open(a.lock, encoding="utf-8") as fh:
@@ -194,6 +211,10 @@ def main(argv=None):
         prev = locked.get(name)
         if prev is None:
             print(f"  [NEW     ] {name}: not in {a.lock}; run `lock` to pin it")
+            drift += 1
+            continue
+        if prev.get("slug") and not cur.get("slug"):
+            print(f"  [HIGH    ] {name}: gone {cur.get('ambiguous') or 'no longer in the public index'}")
             drift += 1
             continue
         for c in diff(prev, cur):
