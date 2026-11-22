@@ -4,6 +4,9 @@
   "outputDirectory": "site",
   "cleanUrls": true,
   "git": { "deploymentEnabled": { "main": false } },
+  "redirects": [
+    { "source": "/privact", "destination": "/privacy", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/badge/:slug.svg", "destination": "/api/badge?slug=:slug" },
     { "source": "/s/:slug", "destination": "/s.html" }
