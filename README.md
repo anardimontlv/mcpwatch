@@ -3,8 +3,8 @@
 **Know when the tools your AI agents trust change.**
 
 MCP servers can quietly rewrite a tool's description after you approved it (a "rug pull"), and that description is
-read by your agent as instructions. mcpwatch fingerprints every tool of every server in the official MCP registry
-daily, grades each server, and fails your CI when something you pinned drifts.
+read by your agent as instructions. mcpwatch checks every server in the official MCP registry daily, fingerprints
+the tools of every publicly reachable remote server, grades each server, and fails your CI when something you pinned drifts.
 
 - **Static and read-only.** It never runs third-party server code and never calls a tool.
 - **Private by default.** Your config never leaves your machine; the CLI only downloads public index files.
@@ -15,17 +15,22 @@ Live index and rug-pull radar: **https://www.mcpwatch.io**
 ## Quickstart
 
 ```bash
-git clone https://github.com/anardimontlv/mcpwatch && cd mcpwatch
+pipx install git+https://github.com/anardimontlv/mcpwatch      # or: pip install git+https://github.com/anardimontlv/mcpwatch
 
 # 1. Scan a config for risky setups (leaked secrets, unpinned packages, root filesystem access, plain HTTP, ...)
-python3 -m mcpwatch.scan ~/.cursor/mcp.json
+mcpwatch-scan ~/.cursor/mcp.json
 
-# 2. Pin the exact tools your servers expose today...
-python3 -m mcpwatch.watch lock .mcp.json          # writes mcpwatch.lock: commit it
+# 2. In your project: pin the exact tools your servers expose today...
+cd your-project
+mcpwatch lock .mcp.json          # writes mcpwatch.lock: commit it
 
 # 3. ...and fail when any of them changes
-python3 -m mcpwatch.watch check .mcp.json         # exit 1 on drift, 2 if the index can't be reached
+mcpwatch check .mcp.json         # exit 1 on drift, 2 if the index can't be reached
 ```
+
+Or paste a config into the browser scanner at **https://www.mcpwatch.io/scan** (runs locally in your browser).
+Tool fingerprints exist for remote servers we can reach without credentials; package-based servers are matched by
+name and version, and their tools are not fingerprinted (we never run their code).
 
 Works with Claude Desktop, Claude Code (`.mcp.json`), Cursor and VS Code configs.
 
@@ -62,6 +67,8 @@ jobs:
 | Tool added or removed; grade changed | medium |
 | Endpoint now requires credentials, or tools can no longer be verified | medium |
 | Fingerprints older than `--max-stale` days (default 3): a server can't hide by blocking the indexer | medium |
+| Server in the config but not in the lock file (`not_locked`) | medium |
+| Package version changed; server newly indexed; server removed from config | low (reported, does not fail) |
 
 ## Scanner rules
 
@@ -78,6 +85,8 @@ jobs:
 | MW101 | Tool poisoning: instructions aimed at the model in a tool description |
 | MW102 | Tools that execute commands or delete data |
 | MW103 | Invisible Unicode in tool text |
+
+Full rule reference: [docs/rules.md](docs/rules.md). Methodology: [docs/how-it-works.md](docs/how-it-works.md). MCP server for agents: [docs/mcp-server.md](docs/mcp-server.md).
 
 Grades are automated signals, not audits. Maintainers can dispute a finding from the server's page.
 

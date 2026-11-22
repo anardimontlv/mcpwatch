@@ -1,0 +1,2 @@
+# Owners who asked us not to probe their endpoints: one MCP registry server name or hostname per line.
+# Opted-out servers keep registry-only checks and are not penalised for it.

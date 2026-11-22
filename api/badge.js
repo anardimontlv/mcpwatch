@@ -1,11 +1,14 @@
 // GET /badge/<slug>.svg -> grade badge. Looks the slug up in this deployment's own static shard.
-const COLORS = { A: "#2e7d32", B: "#558b2f", C: "#f9a825", D: "#ef6c00", F: "#c62828", "?": "#9e9e9e" };
+const COLORS = { A: "#1a7f37", B: "#4d7c0f", C: "#8a5a00", D: "#bc4c00", F: "#c4222e", "?": "#6e7781" };
 
+// must stay byte-identical to mcpwatch/scan.py badge()
 function svg(grade) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="mcpwatch: ${grade}">` +
-    `<rect width="96" height="20" fill="#555"/><rect x="96" width="32" height="20" fill="${COLORS[grade]}"/>` +
-    `<g fill="#fff" font-family="Verdana,sans-serif" font-size="11" text-anchor="middle">` +
-    `<text x="48" y="14">mcpwatch</text><text x="112" y="14">${grade}</text></g></svg>`;
+    `<title>mcpwatch: ${grade}</title><clipPath id="r"><rect width="128" height="20" rx="3"/></clipPath>` +
+    `<g clip-path="url(#r)"><rect width="96" height="20" fill="#1f2a30"/><rect x="96" width="32" height="20" fill="${COLORS[grade]}"/></g>` +
+    `<g fill="none" stroke="#2dd4bf" stroke-width="1.5" stroke-linecap="round"><path d="M12 5a5 5 0 1 0 5 5"/><path d="M12 10l3.5-3.5"/></g>` +
+    `<g fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">` +
+    `<text x="57" y="14">mcpwatch</text><text x="112" y="14" font-weight="bold">${grade}</text></g></svg>`;
 }
 
 module.exports = async (req, res) => {

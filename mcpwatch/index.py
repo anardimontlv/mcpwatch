@@ -9,13 +9,14 @@ Package servers get static checks only: third-party code is never run.
 import argparse, html, json, os, re, sys, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-import hashlib, http.client, ipaddress, socket
+import hashlib, http.client, ipaddress, socket, threading
 from urllib.parse import urlsplit
 from mcpwatch.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal
 from mcpwatch.watch import fingerprints, registry_keys, shard2, diff
+from mcpwatch.webscan import write_scan_assets
 
 REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
-UA = "mcpwatch-index/0.1 (+https://github.com/anardimontlv/mcpwatch)"
+UA = "mcpwatch-index/0.2 (+https://www.mcpwatch.io/probe)"
 MAX_BYTES = 1_000_000
 esc = html.escape
 
@@ -141,11 +142,35 @@ def sse_response(raw):
     return None
 
 
+_host_slots, _host_lock = {}, threading.Lock()
+PER_HOST = 2  # never more than 2 concurrent probes to one hostname (shared hosting has many servers)
+
+
 def probe(url):
     """Return (status, tools). status: 'auth' | 'open' | 'down'."""
     if not public_host(url):
         return "down", []
+    host = (urlsplit(url).hostname or "").lower()
+    with _host_lock:
+        slot = _host_slots.setdefault(host, threading.Semaphore(PER_HOST))
+    with slot:
+        return _probe(url)
+
+
+def _close(url, sid):
+    """End the MCP session (DELETE per the streamable-HTTP transport spec) so servers don't keep it open."""
+    if not sid:
+        return
+    try:
+        req = urllib.request.Request(url, method="DELETE", headers={"User-Agent": UA, "Mcp-Session-Id": sid})
+        _opener.open(req, timeout=5).close()
+    except Exception:
+        pass  # best effort: many servers don't support DELETE
+
+
+def _probe(url):
     dl = time.monotonic() + PROBE_DEADLINE
+    sid = None
     try:
         init, sid = rpc(url, deadline=dl, body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "mcpwatch", "version": "0.1"}}})
@@ -157,11 +182,30 @@ def probe(url):
             pass  # many servers answer 202/4xx to notifications; tools/list is what matters
         res, _ = rpc(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, sid, deadline=dl)
         tools = (res or {}).get("result", {}).get("tools", [])
+        _close(url, sid)
         return "open", tools if isinstance(tools, list) else []
     except urllib.error.HTTPError as e:
         return ("auth" if e.code in (401, 403) else "down"), []
     except Exception:
         return "down", []
+
+
+def load_optout():
+    """Server names or hostnames whose owners asked us not to probe (one per line, # comments)."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "optout.txt")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return {l.split("#", 1)[0].strip().lower() for l in fh} - {""}
+    except OSError:
+        return set()
+
+
+OPTOUT = load_optout()
+
+
+def opted_out(name, url):
+    host = (urlsplit(url).hostname or "").lower() if url else ""
+    return name.lower() in OPTOUT or (host and host in OPTOUT)
 
 
 def assess(s, do_probe=True):
@@ -176,7 +220,9 @@ def assess(s, do_probe=True):
             cfg["headers"] = {**hdrs, "Authorization": "${declared}"}
         f = [x for x in scan_server(name, cfg) if x["rule"] != "MW005"]  # MW005 decided by the live probe below
         findings += f
-        if do_probe and "{" not in url and url.startswith("http"):
+        if do_probe and opted_out(name, url):
+            notes.append(f"{safe_url(url)}: not probed (owner opt-out)")
+        elif do_probe and "{" not in url and url.startswith("http"):
             status, t = probe(url)
             if auth in ("none", "down"):
                 auth = status
@@ -213,28 +259,88 @@ def slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:80] + "-" + hashlib.sha256(name.encode()).hexdigest()[:8]
 
 
-CSS = """:root{--bg:#fff;--fg:#1a1a1a;--mut:#5f6368;--line:#e3e3e3;--card:#f7f7f8;--acc:#1b5e20}
-@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#eee;--mut:#a0a0a0;--line:#2a2a2a;--card:#1a1a1a;--acc:#81c784}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,sans-serif}
-main{max-width:980px;margin:0 auto;padding:24px 16px}a{color:var(--acc)}h1{font-size:2rem;line-height:1.2;margin:.2em 0}
-.mut{color:var(--mut)}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:16px 0}
-table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
-.g{display:inline-block;min-width:2em;text-align:center;border-radius:4px;color:#fff;font-weight:700}
-.gA{background:#2e7d32}.gB{background:#558b2f}.gC{background:#f9a825;color:#111}.gD{background:#ef6c00}.gF{background:#c62828}
-code,pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}pre{overflow-x:auto;background:var(--card);padding:12px;border-radius:8px;border:1px solid var(--line)}
-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:1rem}
-.wrap{overflow-wrap:anywhere}.hi{color:#c62828;font-weight:600}"""
+# Design tokens: docs/brand.md has the hex values and contrast ratios. Grade chip colours are theme-independent.
+CSS = """:root{color-scheme:light dark;--bg:#fff;--sf:#f6f8f9;--fg:#0e1417;--mut:#55616b;--line:#e1e6ea;--acc:#0f766e;--on:#fff;--soft:#e6f4f2;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f12;--sf:#12191d;--fg:#e6edf0;--mut:#9aa7b0;--line:#243038;--acc:#2dd4bf;--on:#042f2b;--soft:#0f2a28}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--acc);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+.in,main{max-width:1040px;margin:0 auto;padding:0 16px}main{padding-top:40px;padding-bottom:24px}
+.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:8px;z-index:9;background:var(--bg);padding:8px 12px}
+.top{border-bottom:1px solid var(--line)}.top .in{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 24px;min-height:60px}
+.brand{display:inline-flex;align-items:center;gap:10px;color:var(--fg);font-weight:650;font-size:1.0625rem;letter-spacing:-.01em;text-decoration:none}
+.logo rect{fill:var(--acc)}.logo .k{stroke:var(--on)}.logo circle{fill:var(--on)}
+nav{display:flex;flex-wrap:wrap;gap:0 20px;font-size:.9375rem}nav a{color:var(--mut);text-decoration:none;padding:8px 0}nav a:hover{color:var(--fg)}
+footer{border-top:1px solid var(--line);margin-top:64px;font-size:.875rem;color:var(--mut)}footer .in{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:0 24px;padding:16px}footer p{margin:8px 0}footer nav{gap:0 16px;font-size:inherit}
+h1,h2,h3{line-height:1.2;letter-spacing:-.02em;margin:0 0 .5em}h1{font-size:clamp(1.875rem,4.6vw,2.75rem)}
+h2{font-size:1.375rem;margin-top:2.4em}h3{font-size:1rem;margin:0 0 .25em}p{margin:0 0 1em}ul{padding-left:1.2em}li{margin:.3em 0}
+.mut{color:var(--mut)}.sm{font-size:.875rem}.wrap{overflow-wrap:anywhere}.min0{min-width:0}.crumb{font-size:.875rem;margin-bottom:20px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin:16px 0}.card h2{font-size:1.0625rem;margin-top:0}
+.hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}
+.eye{display:inline-block;font:500 .8125rem/1 var(--mono);color:var(--acc);background:var(--soft);padding:6px 10px;border-radius:99px;margin-bottom:16px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 20px}
+.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-weight:600;text-decoration:none;transition:border-color .15s,box-shadow .15s}
+.btn:hover{border-color:var(--mut)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on)}
+button.btn{font:inherit;font-weight:600;cursor:pointer}
+textarea{width:100%;min-height:220px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+textarea:focus{outline:2px solid var(--acc);outline-offset:1px}.btn.pri:hover{box-shadow:inset 0 0 0 99px rgb(0 0 0/.14)}
+.trust{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 20px;font-size:.875rem;color:var(--mut)}.trust li::before{content:"\\2713\\00a0";color:var(--acc);font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:40px 0 12px}
+.stat{border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}.stat b{display:block;font-size:clamp(1.25rem,5vw,1.625rem);letter-spacing:-.02em;font-variant-numeric:tabular-nums}.stat span{font-size:.8125rem;color:var(--mut)}
+.dist{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--line);margin:20px 0 10px}
+.legend{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 18px;font-size:.875rem;font-variant-numeric:tabular-nums}
+.steps{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;counter-reset:s}
+.steps li{margin:0;border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--sf);min-width:0}
+.steps h3::before{counter-increment:s;content:counter(s);display:inline-grid;place-items:center;width:22px;height:22px;margin-right:8px;border-radius:50%;background:var(--acc);color:var(--on);font-size:.75rem}
+code,pre{font-family:var(--mono);font-size:.875em}pre{margin:0;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8125rem;line-height:1.6}
+.card pre,.steps pre{margin-top:8px}
+input[type=search]{width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit}input[type=search]:focus-visible{outline-offset:0;border-color:var(--acc)}
+table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;font-size:.9375rem;background:var(--bg);margin:12px 0}
+td,th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);background:var(--sf)}.n{text-align:right;font-variant-numeric:tabular-nums}
+.g{display:inline-grid;place-items:center;min-width:1.75rem;height:1.5rem;padding:0 6px;border-radius:6px;color:#fff;font-weight:700;font-size:.875rem;line-height:1}
+.g.lg{min-width:3.25rem;height:3.25rem;font-size:1.75rem;border-radius:12px;flex:none}
+.gA{background:#1a7f37}.gB{background:#4d7c0f}.gC{background:#8a5a00}.gD{background:#bc4c00}.gF{background:#c4222e}
+.sh{display:flex;gap:16px;align-items:center;margin-bottom:16px}.sh h1{margin:0}.sh p{margin:4px 0 0}
+.sev{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:4px;font-size:.8125rem;font-weight:600;white-space:nowrap}
+.feed{list-style:none;padding:0}.feed li{padding:12px 0;border-top:1px solid var(--line)}.chg{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tag{font:.8125rem/1.5 var(--mono);padding:2px 8px;border-radius:6px;background:var(--sf);border:1px solid var(--line);overflow-wrap:anywhere;min-width:0}
+.tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:32px 0}
+.tier{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);padding:24px}.tier h2{margin:0;font-size:1.0625rem}.tier ul{flex:1;margin:16px 0}
+.price{font-size:2.25rem;font-weight:700;letter-spacing:-.03em;margin:8px 0 0}.price small{font-size:.875rem;font-weight:400;color:var(--mut);letter-spacing:0}
+.soon{margin:0;padding:10px;border:1px dashed var(--line);border-radius:8px;text-align:center;color:var(--mut);font-size:.875rem}
+.prose{max-width:720px}.prose h2{font-size:1.125rem;margin-top:2em}
+@media (max-width:600px){.card{padding:16px}td,th{padding:8px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}"""
+
+_MARK = ('<rect width="24" height="24" rx="6"{f}/><g fill="none" stroke-width="2" stroke-linecap="round">'
+         '<path class="k"{s} d="M12 5.5a6.5 6.5 0 1 0 6.5 6.5"/><path class="k"{s} d="M12 12l4.6-4.6"/></g><circle cx="12" cy="12" r="1.8"{c}/>')
+# radar ring with a gap: the sweep points at the part that changed
+LOGO = f'<svg class="logo" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">{_MARK.format(f="", s="", c="")}</svg>'
+_FAV = _MARK.format(f=' fill="#0f766e"', s=' stroke="#fff"', c=' fill="#fff"')
+FAVICON = "data:image/svg+xml," + urllib.request.quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' + _FAV + '</svg>', safe="")
+GH = "https://github.com/anardimontlv/mcpwatch"
+HOW = GH + "/blob/main/docs/how-it-works.md"
 
 
-def page(title, body, desc):
+def page(title, body, desc, noindex=False):
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><style>{CSS}</style></head>'
-            f'<body><main>{body}<p class="mut" style="margin-top:48px">mcpwatch: static and read-only checks. '
-            f'A grade is not a guarantee of safety. <a href="/">Index</a> · <a href="/changes">Rug-pull radar</a> · <a href="/pricing">Pricing</a> · <a href="https://github.com/anardimontlv/mcpwatch">GitHub</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a></p></main></body></html>')
+            + ('<meta name="robots" content="noindex">' if noindex else '') +
+            f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}"><style>{CSS}</style></head>'
+            f'<body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="in"><a class="brand" href="/">{LOGO}mcpwatch</a>'
+            f'<nav aria-label="Main"><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}#quickstart">Docs</a><a href="{GH}">GitHub</a></nav></div></header>'
+            f'<main id="main">{body}</main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety.</p>'
+            f'<nav aria-label="Footer"><a href="/">Index</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}">GitHub</a>'
+            f'<a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/refunds">Refunds</a></nav></div></footer></body></html>')
 
 
-def g(grade):
-    return f'<span class="g g{grade}">{grade}</span>'
+def g(grade, cls=""):
+    return f'<span class="g g{grade}{cls}"><span class="vh">Grade </span>{grade}</span>'
+
+
+def sev(s):
+    return f"<span class='sev'>{esc(str(s).capitalize())}</span>"
 
 
 BASE = os.environ.get("MCPWATCH_URL", "https://www.mcpwatch.io").rstrip("/")
@@ -257,21 +363,28 @@ def compact(r):
 
 SERVER_JS = """
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const card=t=>{const k=$('section',null,'card');k.append($('h2',t));return k};
 const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\\.html$/,'');
 const m=document.getElementById('m');
 if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
 fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()).then(d=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
-document.title='Is '+r.t+' MCP server safe? Grade '+r.g;
-const h=$('h1',r.t+' ');h.className='wrap';h.append($('span',r.g,'g g'+r.g));
-const k=$('div',null,'card');k.append($('h2','Findings'));
-if(!r.f.length)k.append($('p','No issues found by current checks.'));
-r.f.forEach(f=>{const p=$('p',null,'wrap');p.append($('b',f[0]+' '+f[1]+': '),f[2]);k.append(p)});
-const c=$('div',null,'card');c.append($('h2','What was checked'));r.o.forEach(o=>c.append($('p',o,'wrap')));
-c.append($('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
-const b=$('div',null,'card');const dl=$('a','Dispute this grade');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
-const dp=$('p','Think a finding is wrong? ');dp.append(dl);b.append($('h2','Maintainer? Add the badge'),dp,
- $('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
-m.replaceChildren($('p',r.n+' · v'+r.v+' · score '+r.s+'/100','mut wrap'),h,$('p',r.d,'wrap'),k,c,b)})
+document.title=r.t+' MCP server: security check (grade '+r.g+')';
+const gr=$('span',null,'g lg g'+r.g);gr.append($('span','Grade ','vh'),r.g);
+const tx=$('div',null,'min0');tx.append($('h1',r.t,'wrap'),$('p',r.n+' · v'+r.v+' · score '+r.s+'/100'+(r.vd?' · tools verified '+r.vd:''),'mut sm wrap'));
+const hd=$('div',null,'sh');hd.append(gr,tx);const dl=$('a','dispute any finding');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
+const hw=$('a','How grading works');hw.href='HOWURL';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. Maintainers can ','mut sm');nt.append(dl,'. ',hw);
+const top=[hd,nt,$('p',r.d,'wrap')];
+if(/^https:\\/\\//.test(r.r)){const p=$('p','Source: ','wrap'),a=$('a',r.r);a.href=r.r;a.rel='nofollow';p.append(a);top.push(p)}
+const k=card('Findings');
+if(!r.f.length)k.append($('p','No issues found by current checks.','mut'));else{
+const t=$('table'),hr=$('tr'),th=$('thead'),tb=$('tbody');['Severity','Rule','Detail'].forEach(x=>hr.append($('th',x)));th.append(hr);
+r.f.forEach(f=>{const tr=$('tr'),s=$('td');s.append($('span',String(f[0]).charAt(0).toUpperCase()+String(f[0]).slice(1),'sev'));tr.append(s,$('td',f[1]),$('td',f[2],'wrap'));tb.append(tr)});
+t.append(th,tb);k.append(t)}
+const c=card('What was checked'),ul=$('ul');r.o.forEach(o=>ul.append($('li',o,'wrap')));
+c.append(ul,$('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
+const b=card('Maintainer? Add the badge');const d2=$('a','Dispute this grade');d2.href=dl.href;d2.rel='nofollow';
+const dp=$('p','Think a finding is wrong? ');dp.append(d2,'.');b.append(dp,$('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
+m.replaceChildren(...top,k,c,b)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
 """
 
@@ -279,21 +392,24 @@ CHANGES_JS = """
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
 const box=document.getElementById('c');
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
-if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.'));return}
-days.forEach(d=>{const k=$('div',null,'card');k.append($('h2',d.date+' · '+d.items.length+' server(s) changed'));
-d.items.slice(0,200).forEach(it=>{const p=$('p',null,'wrap');const a=$('a',it.name);a.href='/s/'+it.slug;p.append(a,' — ');
-it.changes.forEach((c,i)=>{p.append($('span',(i?', ':'')+c.kind.replace('_',' ')+' '+c.detail,c.sev==='high'?'hi':''))});k.append(p)});
-box.append(k)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
+if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
+days.forEach(d=>{const s=$('section'),ul=$('ul',null,'feed'),n=d.items.length;s.append($('h2',d.date+' · '+n+' server'+(n===1?'':'s')+' changed'));
+if(!n)s.append($('p','No tool changes detected.','mut'));
+d.items.slice(0,200).forEach(it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
+it.changes.forEach(c=>{const t=$('span',null,'tag');if(c.sev==='high')t.append($('b','High: '));t.append(c.kind.replace(/_/g,' ')+' '+c.detail);cs.append(t)});
+li.append(a,cs);ul.append(li)});s.append(ul);box.append(s)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
 SEARCH_JS = """
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
-const q=document.getElementById('q'),out=document.getElementById('res');let L=null;
-q.addEventListener('input',async()=>{const v=q.value.trim().toLowerCase();if(v.length<2){out.replaceChildren();return}
-if(!L)L=await (await fetch('/list.json')).json();
-const hits=L.filter(x=>x[0].includes(v)||x[1].toLowerCase().includes(v)).slice(0,50);
+const q=document.getElementById('q'),out=document.getElementById('res'),T=document.getElementById('rt'),rc=document.getElementById('rc');let L=null;
+q.addEventListener('input',async()=>{const v=q.value.trim().toLowerCase();if(v.length<2){out.replaceChildren();T.hidden=true;rc.textContent='';return}
+if(!L){try{L=await (await fetch('/list.json')).json()}catch(e){rc.textContent='Could not load the index.';return}}
+const all=L.filter(x=>x[0].includes(v)||x[1].toLowerCase().includes(v)),hits=all.slice(0,50);
+rc.textContent=!all.length?'No servers match.':all.length>50?'Showing 50 of '+all.length.toLocaleString()+' matches.':all.length+(all.length===1?' match.':' matches.');
+T.hidden=!hits.length;
 out.replaceChildren(...hits.map(x=>{const tr=$('tr'),a=$('a',x[1]);a.href='/s/'+x[0];
-const td=$('td',null,'wrap');td.append(a);const g=$('td');g.append($('span',x[2],'g g'+x[2]));tr.append(g,td,$('td',String(x[3])));return tr}))});
+const td=$('td',null,'wrap');td.append(a);const g=$('td'),c=$('span',null,'g g'+x[2]);c.append($('span','Grade ','vh'),x[2]);g.append(c);tr.append(g,td,$('td',String(x[3]),'n'));return tr}))});
 """
 
 
@@ -326,63 +442,83 @@ def write_site(results, out, changes=None):
             json.dump(v, fh, separators=(",", ":"))
     web = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
     entity = esc(os.environ.get("MCPWATCH_LEGAL_ENTITY", "the mcpwatch project"))
-    titles = {"pricing": "Pricing", "terms": "Terms of Service", "privacy": "Privacy Policy", "refunds": "Refund Policy"}
+    titles = {"pricing": "Pricing", "terms": "Terms of Service", "privacy": "Privacy Policy", "refunds": "Refund Policy",
+              "probe": "How the index checks servers", "scan": "Scan your MCP config"}
     for name, title in titles.items():
         with open(os.path.join(web, f"{name}.html"), encoding="utf-8") as fh:
             body = fh.read().replace("{{LEGAL_ENTITY}}", entity)
         with open(f"{out}/{name}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}."))
+    write_scan_assets(out)  # /scan.js for the in-browser scanner
     with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
         json.dump(changes or [], fh, separators=(",", ":"))
     with open(f"{out}/changes.html", "w", encoding="utf-8") as fh:
         fh.write(page("MCP rug-pull radar: tool changes across every public MCP server",
-                      "<p><a href='/'>← All servers</a></p><h1>Rug-pull radar</h1><p>Every public MCP server is fingerprinted daily. "
-                      "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p>"
-                      "<div id='c'><p>Loading…</p></div>" f"<script>{CHANGES_JS}</script>",
-                      "Daily feed of MCP tool changes (possible rug pulls) across every server in the official registry."))
+                      "<div class='hero'><span class='eye'>Updated daily</span><h1>Rug-pull radar</h1><p class='lede'>Every public MCP server is fingerprinted daily. "
+                      "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p></div>"
+                      "<div id='c'><p class='mut'>Loading…</p></div>" f"<script>{CHANGES_JS}</script>",
+                      "Daily feed of MCP tool changes across every server in the official registry."))
 
     # static, crawlable pages only where there is something to say (grade below A); /s/<slug> covers the rest
     for sl, r in notable:
-        rows = "".join(f"<tr><td>{esc(x['severity'])}</td><td>{esc(x['rule'])}</td><td class='wrap'>{esc(x['message'])}</td></tr>"
+        rows = "".join(f"<tr><td>{sev(x['severity'])}</td><td>{esc(x['rule'])}</td><td class='wrap'>{esc(x['message'])}</td></tr>"
                        for x in r["findings"])
         notes = "".join(f"<li class='wrap'>{esc(n)}</li>" for n in r["notes"])
         tools = ", ".join(esc(t) for t in r["tools"][:30]) or "not listed publicly"
         md = f"[![mcpwatch]({BASE}/badge/{sl}.svg)]({BASE}/s/{sl})"
-        body = (f"<p><a href='/'>← All servers</a></p><h1 class='wrap'>{esc(r['title'])} {g(r['grade'])}</h1>"
-                f"<p class='mut wrap'>{esc(r['name'])} · v{esc(r['version'])} · score {r['score']}/100 · checked {now}</p>"
+        body = (f"<p class='crumb'><a href='/'>← All servers</a></p><div class='sh'>{g(esc(r['grade']), ' lg')}<div class='min0'>"
+                f"<h1 class='wrap'>{esc(r['title'])}</h1><p class='mut sm wrap'>{esc(r['name'])} · v{esc(r['version'])} · "
+                f"score {esc(str(r['score']))}/100 · checked {now}</p></div></div>"
+                f"<p class='mut sm'>Automated, read-only signal from public data, not an audit or an accusation. Maintainers can "
+                f"<a rel='nofollow' href='{esc(DISPUTE + urllib.request.quote(r['name']))}'>dispute any finding</a>. <a href='{HOW}'>How grading works</a></p>"
                 f"<p class='wrap'>{esc(r['description'][:600])}</p>"
                 + (f"<p class='wrap'>Source: <a rel='nofollow' href='{esc(r['repo'])}'>{esc(r['repo'])}</a></p>" if r['repo'].startswith("https://") else "")
-                + f"<div class='card'><h2>Findings</h2><table><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr>{rows}</table></div>"
-                f"<div class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></div>"
-                f"<div class='card'><h2>Maintainer? Fix, then add the badge</h2><p>Grades refresh daily. "
-                f"Think a finding is wrong? <a rel='nofollow' href='{DISPUTE}{urllib.request.quote(r['name'])}'>Dispute this grade</a>.</p>"
-                f"<pre class='wrap'>{esc(md)}</pre></div>")
+                + f"<section class='card'><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr></thead><tbody>{rows}</tbody></table></section>"
+                f"<section class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></section>"
+                f"<section class='card'><h2>Maintainer? Add the badge</h2><p>Grades refresh daily. "
+                f"Think a finding is wrong? <a rel='nofollow' href='{esc(DISPUTE + urllib.request.quote(r['name']))}'>Dispute this grade</a>.</p>"
+                f"<pre>{esc(md)}</pre></section>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
-            fh.write(page(f"Is {r['title']} MCP server safe? Grade {r['grade']}", body,
-                          f"mcpwatch security grade {r['grade']} for the {r['title']} MCP server: findings, auth, tools."))
+            fh.write(page(f"{r['title']} MCP server: security check (grade {r['grade']})", body,
+                          f"Automated, read-only security check of the {r['title']} MCP server: grade, findings, auth, tools. Updated daily."))
     with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
-        fh.write(page("MCP server security grade: mcpwatch", "<p><a href='/'>← All servers</a></p><div id='m'><p>Loading…</p></div>"
-                      f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE)}</script>", "mcpwatch security grade for an MCP server."))
+        fh.write(page("MCP server security grade: mcpwatch", "<p class='crumb'><a href='/'>← All servers</a></p><div id='m'><p class='mut'>Loading…</p></div>"
+                      f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE).replace('HOWURL', HOW)}</script>", "mcpwatch security grade for an MCP server.", noindex=True))
 
     counts = {k: sum(r["grade"] == k for r in results) for k in "ABCDF"}
     open_n = sum(any(x["rule"] == "MW005" for x in r["findings"]) for r in results)
-    worst = sorted(notable, key=lambda x: (x[1]["score"], x[1]["name"]))[:100]
-    rows = "".join(f"<tr><td>{g(r['grade'])}</td><td class='wrap'><a href='/s/{sl}'>{esc(r['title'])}</a>"
-                   f"<br><span class='mut'>{esc(r['name'])}</span></td><td>{len(r['findings'])}</td></tr>" for sl, r in worst)
-    body = (f"<h1>Know when the tools your AI agents trust change.</h1>"
-            f"<p>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch fingerprints every tool "
-            f"of every server in the official MCP registry daily, grades them for leaked secrets, plain-HTTP endpoints, "
-            f"unauthenticated access and poisoned descriptions, and alerts you when something you depend on changes. "
-            f"No agent to install, no code executed, nothing leaves your machine. Last run {now}.</p>"
-            f"<p><a href='/changes'>See today's rug-pull radar →</a> · <a href='/pricing'>Pricing</a></p>"
-            f"<div class='card'><b>{len(results):,}</b> servers · " + " · ".join(f"{g(k)} {v:,}" for k, v in counts.items())
-            + f" · <b>{open_n:,}</b> list tools to anyone without auth</div>"
-            f"<div class='card'><h2>Scan your own config, free</h2><pre>git clone https://github.com/anardimontlv/mcpwatch &amp;&amp; cd mcpwatch\n"
-            f"python3 -m mcpwatch.scan ~/.cursor/mcp.json</pre><p class='mut'>Works on Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs. "
-            f"Runs locally; nothing leaves your machine.</p></div>"
-            f"<input id='q' placeholder='Search {len(results):,} servers…' aria-label='Search servers'>"
-            f"<table><tbody id='res'></tbody></table>"
-            f"<h2>Lowest grades today</h2><table><thead><tr><th>Grade</th><th>Server</th><th>Findings</th></tr></thead><tbody>{rows}</tbody></table>"
+    total = max(len(results), 1)
+    dist = "".join(f"<span class='g{k}' style='width:{v * 100 / total:.3f}%'></span>" for k, v in counts.items() if v)
+    latest = (changes or [{}])[0]
+    radar = f"{len(latest['items']):,}" if latest.get("items") is not None else "–"
+    radar_lbl = f"servers changed on {esc(latest['date'])}" if latest.get("date") else "servers changed (baseline pending)"
+    steps = [("Scan", "Flag leaked secrets, unpinned packages, plain HTTP and root filesystem access.", "mcpwatch-scan ~/.cursor/mcp.json"),
+             ("Lock", "Pin the exact tools your servers expose today. Commit mcpwatch.lock.", "mcpwatch lock .mcp.json"),
+             ("Check", "Fail CI when any pinned tool changes: exit 1 on drift.", "mcpwatch check .mcp.json")]
+    body = (f"<section class='hero'><span class='eye'>Rug-pull radar for MCP</span><h1>Know when the tools your AI agents trust change.</h1>"
+            f"<p class='lede'>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch checks every server in the "
+            f"official MCP registry daily, fingerprints the tools of every remote server it can reach, grades them for leaked secrets, "
+            f"plain-HTTP endpoints, unauthenticated access and poisoned descriptions, and fails your CI when a tool you pinned changes.</p>"
+            f"<div class='cta'><a class='btn pri' href='/scan'>Scan your config</a><a class='btn' href='/changes'>See today's radar →</a></div>"
+            f"<ul class='trust'><li>Read-only checks</li><li>Never runs third-party code</li><li>Nothing leaves your machine</li>"
+            f"<li>No cookies or trackers</li></ul></section>"
+            f"<section aria-label='Index statistics'><div class='stats'>"
+            f"<div class='stat'><b>{len(results):,}</b><span>servers graded daily</span></div>"
+            f"<div class='stat'><b>{open_n:,}</b><span>list tools to anyone, no auth</span></div>"
+            f"<div class='stat'><b>{radar}</b><span>{radar_lbl}</span></div>"
+            f"<div class='stat'><b>{now}</b><span>last run (UTC)</span></div></div>"
+            f"<div class='dist' aria-hidden='true'>{dist}</div><ul class='legend'>"
+            + "".join(f"<li>{g(k)} {v:,}</li>" for k, v in counts.items()) + "</ul></section>"
+            f"<h2>Quickstart</h2><p class='mut'>Zero dependencies, Python 3.9+. Works with Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs.</p>"
+            f"<pre>pipx install git+{GH}</pre><ol class='steps'>"
+            + "".join(f"<li><h3>{t}</h3><p class='mut sm'>{d}</p><pre>{esc(c)}</pre></li>" for t, d, c in steps) + "</ol>"
+            f"<p class='sm'><a href='{GH}#github-action'>Run it as a GitHub Action →</a></p>"
+            f"<h2><label for='q'>Look up a server</label></h2>"
+            f"<input id='q' type='search' autocomplete='off' spellcheck='false' placeholder='Search {len(results):,} servers by name…'>"
+            f"<p id='rc' class='mut sm' aria-live='polite'></p>"
+            f"<table id='rt' hidden><thead><tr><th>Grade</th><th>Server</th><th class='n'>Findings</th></tr></thead><tbody id='res'></tbody></table>"
+            f"<h2>Recent tool changes across the ecosystem</h2><p class='mut'>Every day mcpwatch compares each server's tools with the day before: "
+            f"changed tool descriptions, added or removed tools, auth and grade changes.</p><p><a class='btn' href='/changes'>Open the radar →</a></p>"
             f"<script>{SEARCH_JS}</script>")
     with open(f"{out}/index.html", "w", encoding="utf-8") as fh:
         fh.write(page("MCP Server Security Index: mcpwatch", body, "Daily security grades for every MCP server in the official registry."))

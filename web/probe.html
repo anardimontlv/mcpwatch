@@ -1,0 +1,24 @@
+<article class="prose">
+<h1>How the index checks servers</h1>
+<p>If you saw <code>mcpwatch-index</code> in your logs, this page explains what it did and how to opt out.</p>
+<h2>What we send</h2>
+<p>Once a day, for each remote endpoint a publisher listed in the official MCP registry, the indexer sends the same requests any MCP client sends when it connects:</p>
+<ol>
+<li><code>initialize</code> (the standard MCP handshake)</li>
+<li><code>notifications/initialized</code></li>
+<li><code>tools/list</code> (reads the tool names, descriptions and input schemas)</li>
+<li>an HTTP <code>DELETE</code> with the session id, to close the session</li>
+</ol>
+<p>That's all. We never call a tool, never send credentials, never guess passwords and never fuzz. If your endpoint asks for authentication, we stop and record "requires auth".</p>
+<h2>Limits we keep</h2>
+<ul>
+<li>At most 3 endpoints per server and at most 2 concurrent connections per hostname.</li>
+<li>A 20-second budget per endpoint and a 1&nbsp;MB response cap.</li>
+<li>Only public internet addresses: private, loopback and cloud-metadata addresses are refused, and redirects are not followed.</li>
+<li>User-Agent: <code>mcpwatch-index/0.2 (+https://www.mcpwatch.io/probe)</code>.</li>
+</ul>
+<h2>Opt out</h2>
+<p>Open an issue titled "Opt out: &lt;your registry server name or hostname&gt;" at <a href="https://github.com/anardimontlv/mcpwatch/issues/new?labels=opt-out&amp;title=Opt+out%3A+">github.com/anardimontlv/mcpwatch</a>. Opted-out servers are no longer contacted. Their page keeps only the checks based on public registry data and says "not probed (owner opt-out)"; opting out never lowers a grade.</p>
+<h2>Why we do this</h2>
+<p>Developers connect AI agents to MCP servers, and an agent reads tool descriptions as instructions. Publishing which tools a public endpoint exposes, and noticing when they change, helps people decide what to trust. The method is documented in <a href="https://github.com/anardimontlv/mcpwatch/blob/main/docs/how-it-works.md">how it works</a>, and the indexer's source code is public.</p>
+</article>

@@ -188,3 +188,50 @@ class RegistryFalsePositives(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProbeEtiquetteTest(unittest.TestCase):
+    def test_per_host_concurrency_capped(self):
+        import threading, time
+        from unittest import mock
+        from concurrent.futures import ThreadPoolExecutor
+        from mcpwatch import index
+        live, peak, lock = [0], [0], threading.Lock()
+
+        def fake(url):
+            with lock:
+                live[0] += 1; peak[0] = max(peak[0], live[0])
+            time.sleep(0.05)
+            with lock:
+                live[0] -= 1
+            return "down", []
+        with mock.patch.object(index, "public_host", lambda u: True), mock.patch.object(index, "_probe", fake):
+            with ThreadPoolExecutor(16) as ex:
+                list(ex.map(index.probe, [f"https://same.example.com/mcp{i}" for i in range(12)]))
+        self.assertLessEqual(peak[0], index.PER_HOST)
+
+    def test_opted_out_server_not_probed_or_penalised(self):
+        from unittest import mock
+        from mcpwatch import index
+        called = []
+        with mock.patch.object(index, "OPTOUT", {"io.example/srv"}), mock.patch.object(index, "probe", lambda u: called.append(u) or ("open", [])):
+            r = index.assess({"name": "io.example/srv", "remotes": [{"url": "https://srv.example.com/mcp"}]})
+        self.assertEqual(called, [])
+        self.assertIn("not probed (owner opt-out)", " ".join(r["notes"]))
+        self.assertEqual(r["grade"], "A")
+
+
+class WindowsAndPipxTest(unittest.TestCase):
+    def test_cmd_c_npx_is_scanned_as_npx(self):
+        self.assertEqual(rules(scan_server("w", {"command": "cmd", "args": ["/c", "npx", "-y", "@scope/pkg@1.0.0"]})), set())
+        self.assertEqual(rules(scan_server("w", {"command": "cmd", "args": ["/c", "npx", "-y", "@scope/pkg"]})), {"MW002"})
+        self.assertIn("MW008", rules(scan_server("w", {"command": "cmd", "args": ["/c", "npx", "pkg", "&", "calc"]})))
+
+    def test_pipx_run(self):
+        self.assertEqual(rules(scan_server("p", {"command": "pipx", "args": ["run", "mcp-server-git==1.0"]})), set())
+        f = scan_server("p", {"command": "pipx", "args": ["run", "mcp-server-git"]})
+        self.assertIn("'mcp-server-git'", f[0]["message"])
+
+    def test_config_keys_unwrap_cmd(self):
+        from mcpwatch.watch import config_keys
+        self.assertEqual(config_keys({"command": "cmd", "args": ["/c", "npx", "-y", "@scope/srv@1.2"]}), ["npm:@scope/srv"])

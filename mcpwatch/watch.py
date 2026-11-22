@@ -76,6 +76,9 @@ def config_keys(cfg):
     args = cfg.get("args")
     args = shlex.split(args) if isinstance(args, str) else [str(a) for a in args] if isinstance(args, list) else []
     exe = cmd.replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".cmd").removesuffix(".exe")
+    if exe == "cmd" and len(args) >= 2 and args[0].lower() == "/c":  # Windows: `cmd /c npx -y pkg`
+        exe = args[1].replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".cmd").removesuffix(".exe")
+        args = args[2:]
     plain = [a for a in args if not a.startswith("-")]
     if exe in {"npx", "bunx", "pnpx"} and plain:
         return [pkg_key("npm", plain[0])]
@@ -180,6 +183,34 @@ def snapshot(servers):
     return out
 
 
+def drift_items(locked, now, max_stale):
+    """The single source of drift rules (CLI and MCP server both use it). Fails closed by design."""
+    items = []
+    add = lambda name, kind, sev, detail: items.append({"server": name, "kind": kind, "sev": sev, "detail": detail})
+    for name, cur in now.items():
+        prev = locked.get(name)
+        if prev is None:
+            add(name, "not_locked", "medium", "not in the lock file; run `lock` to pin it")
+            continue
+        if not prev.get("slug") and cur.get("slug"):
+            add(name, "newly_indexed", "low", "now in the public index; run `lock` to pin its tools")
+            continue
+        if prev.get("slug") and not cur.get("slug"):
+            add(name, "gone", "high", cur.get("ambiguous") or "no longer in the public index")
+            continue
+        if prev.get("slug") and cur["slug"] != prev["slug"]:
+            add(name, "reassigned", "high", f"now resolves to {cur['slug']}, pinned {prev['slug']}")
+            continue
+        # a server that hides from the indexer (blocks us, goes "down") must not keep passing on old fingerprints
+        if prev.get("h") and not fresh(cur.get("vd"), max_stale):
+            add(name, "stale", "medium", f"tools last verified {cur.get('vd') or 'never'}, not within {max_stale} day(s)")
+        for c in diff(prev, cur):
+            add(name, c["kind"], c["sev"], c["detail"])
+    for name in sorted(set(locked) - set(now)):
+        add(name, "removed_from_config", "low", "pinned in the lock file but no longer in the config")
+    return items
+
+
 def main(argv=None):
     from mcpwatch.scan import servers_of
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -218,28 +249,10 @@ def main(argv=None):
     except (OSError, ValueError) as e:
         print(f"mcpwatch: cannot read lock file ({e}); run `lock` first", file=sys.stderr)
         return 2
-    drift = 0
-    for name, cur in now.items():
-        prev = locked.get(name)
-        if prev is None:
-            print(f"  [NEW     ] {name}: not in {a.lock}; run `lock` to pin it")
-            drift += 1
-            continue
-        if prev.get("slug") and not cur.get("slug"):
-            print(f"  [HIGH    ] {name}: gone {cur.get('ambiguous') or 'no longer in the public index'}")
-            drift += 1
-            continue
-        if prev.get("slug") and cur["slug"] != prev["slug"]:
-            print(f"  [HIGH    ] {name}: reassigned: now resolves to {cur['slug']}, pinned {prev['slug']}")
-            drift += 1
-            continue
-        # a server that hides from the indexer (blocks us, goes "down") must not keep passing on old fingerprints
-        if prev.get("h") and not fresh(cur.get("vd"), a.max_stale):
-            print(f"  [MEDIUM  ] {name}: stale: tools last verified {cur.get('vd') or 'never'}, not within {a.max_stale} day(s)")
-            drift += 1
-        for c in diff(prev, cur):
-            print(f"  [{c['sev'].upper():8}] {name}: {c['kind']} {c['detail']}")
-            drift += c["sev"] in ("high", "medium")
+    items = drift_items(locked, now, a.max_stale)
+    for i in items:
+        print(f"  [{i['sev'].upper():8}] {i['server']}: {i['kind']} {i['detail']}")
+    drift = any(i["sev"] in ("high", "medium") for i in items)
     print(f"mcpwatch: {'DRIFT DETECTED' if drift else 'no drift'} across {len(now)} server(s)")
     return 1 if drift else 0
 

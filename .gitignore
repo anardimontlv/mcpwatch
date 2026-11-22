@@ -7,3 +7,4 @@ __pycache__/
 .codex/
 site/
 .private/
+.playwright-mcp/

@@ -1,0 +1,14 @@
+<h1>Scan your MCP config</h1>
+<p>Runs in your browser. Your config is never uploaded.</p>
+<div class="card">
+<label for="cfg"><strong>MCP config or tools manifest (JSON)</strong></label>
+<p id="cfg-help" class="mut wrap">Paste the whole file. Claude Desktop: <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>. Claude Code: <code>.mcp.json</code>. Cursor: <code>~/.cursor/mcp.json</code>. VS Code: <code>.vscode/mcp.json</code>. A <code>{"tools": [...]}</code> manifest from <code>tools/list</code> works too.</p>
+<textarea id="cfg" rows="12" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="cfg-help" style="display:block;width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:14px"></textarea>
+<p class="cta"><button type="button" class="btn pri" id="scan-btn">Scan</button> <button type="button" class="btn" id="example-btn">Try an example</button></p>
+</div>
+<div id="results" aria-live="polite"></div>
+<div class="card">
+<p><strong>Keep it safe:</strong> pin these tools with <code>mcpwatch lock</code>, and <code>mcpwatch check</code> fails your CI the day one of them changes.</p>
+<p><a href="https://github.com/anardimontlv/mcpwatch#quickstart">Quickstart on GitHub →</a> · <a href="/pricing">Pricing →</a></p>
+</div>
+<script src="/scan.js"></script>

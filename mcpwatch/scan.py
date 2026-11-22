@@ -145,13 +145,19 @@ def scan_server(name, cfg):
         if UNSAFE_FLAGS.match(a):
             add("MW009", "high", f"Launched with '{a.split('=')[0]}', which turns off a safety control.")
 
+    orig_args = args
+    # Windows launches npx & co. as `cmd /c npx ...`: scan the program it runs, unless real shell syntax is involved
+    if exe == "cmd" and len(args) >= 2 and args[0].lower() == "/c" and not any(re.search(r"[&|<>^]", x) for x in args[1:]):
+        exe = args[1].replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".cmd").removesuffix(".exe")
+        args = args[2:]
     if exe in RUNNERS:
-        pkg = first_package(args)
+        plain = [x for x in args if not x.startswith("-")]
+        pkg = first_package(args[args.index(plain[1]):] if exe == "pipx" and len(plain) > 1 and plain[0] == "run" else args)
         if pkg and not pkg_pinned(pkg):
             add("MW002", "medium", f"Unpinned package '{pkg}' via {exe}: every launch runs whatever the registry serves. Pin a version.")
     if exe in {"bash", "sh", "zsh", "cmd", "powershell", "pwsh"} and any(a in {"-c", "/c", "-Command"} for a in args):
         add("MW008", "high", "Server launched through an inline shell command. Hard to audit; prefer a direct executable.")
-    if re.search(r"(curl|wget)[^|]*\|\s*(ba|z)?sh", " ".join([cmd] + args)):
+    if re.search(r"(curl|wget)[^|]*\|\s*(ba|z)?sh", " ".join([cmd] + orig_args)):
         add("MW008", "critical", "Pipes a download straight into a shell.")
 
     if exe in {"docker", "podman"}:
@@ -227,15 +233,17 @@ def score(findings):
     return pts, grade
 
 
-BADGE_COLORS = {"A": "#2e7d32", "B": "#558b2f", "C": "#f9a825", "D": "#ef6c00", "F": "#c62828"}
+BADGE_COLORS = {"A": "#1a7f37", "B": "#4d7c0f", "C": "#8a5a00", "D": "#bc4c00", "F": "#c4222e"}  # white text >= 4.99:1
 
 
-def badge(grade):
+def badge(grade):  # api/badge.js svg() must stay byte-identical
     c = BADGE_COLORS[grade]
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="128" height="20" role="img" aria-label="mcpwatch: {grade}">'
-            f'<rect width="96" height="20" fill="#555"/><rect x="96" width="32" height="20" fill="{c}"/>'
-            f'<g fill="#fff" font-family="Verdana,sans-serif" font-size="11" text-anchor="middle">'
-            f'<text x="48" y="14">mcpwatch</text><text x="112" y="14">{grade}</text></g></svg>')
+            f'<title>mcpwatch: {grade}</title><clipPath id="r"><rect width="128" height="20" rx="3"/></clipPath>'
+            f'<g clip-path="url(#r)"><rect width="96" height="20" fill="#1f2a30"/><rect x="96" width="32" height="20" fill="{c}"/></g>'
+            f'<g fill="none" stroke="#2dd4bf" stroke-width="1.5" stroke-linecap="round"><path d="M12 5a5 5 0 1 0 5 5"/><path d="M12 10l3.5-3.5"/></g>'
+            f'<g fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">'
+            f'<text x="57" y="14">mcpwatch</text><text x="112" y="14" font-weight="bold">{grade}</text></g></svg>')
 
 
 def md_cell(s):
