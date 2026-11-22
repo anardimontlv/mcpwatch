@@ -330,7 +330,7 @@ def page(title, body, desc, noindex=False):
             f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}"><style>{CSS}</style></head>'
             f'<body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="in"><a class="brand" href="/">{LOGO}mcpwatch</a>'
             f'<nav aria-label="Main"><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}#quickstart">Docs</a><a href="{GH}">GitHub</a></nav></div></header>'
-            f'<main id="main">{body}</main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety.</p>'
+            f'<main id="main">{body}</main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety. Servers listed here are third-party projects from the public MCP registry; mcpwatch does not sell, operate or endorse them. mcpwatch sells one product: developer security monitoring (<a href="/pricing">pricing</a>).</p>'
             f'<nav aria-label="Footer"><a href="/">Index</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}">GitHub</a>'
             f'<a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/refunds">Refunds</a></nav></div></footer></body></html>')
 
