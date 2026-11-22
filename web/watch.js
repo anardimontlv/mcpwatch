@@ -83,7 +83,8 @@
       history.replaceState(null, "", "/watch");
       return true;
     }
-    $("w-who").textContent = "Daily digest goes to " + d.email + ". " + d.slugs.length + " of " + d.max + " servers watched.";
+    $("w-who").textContent = "Daily digest goes to " + d.email + ". " + d.slugs.length + " server" + (d.slugs.length === 1 ? "" : "s") +
+      " watched (you can watch up to " + d.max + " of the index's servers during the beta).";
     renderList(d.slugs);
     return true;
   }
