@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: anardimontlv/mcpwatch@main
+      - uses: anardimontlv/mcpwatch-action@v1
         with:
           config: .mcp.json
           fail-on: high
@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: anardimontlv/mcpwatch@main
+      - uses: anardimontlv/mcpwatch-action@v1
         with:
           mode: check
           config: .mcp.json
