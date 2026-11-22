@@ -24,7 +24,7 @@ jobs:
           git clone -q --depth 1 --branch history --single-branch "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" hist \
             || { mkdir -p hist && git -C hist init -q -b history && git -C hist remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"; }
       - run: python -m mcpwatch.index --out site --prev prev/site/d --history hist
-        env: { MCPWATCH_LEGAL_ENTITY: "Amir Nardimon, a registered business in Israel" }
+        env: { MCPWATCH_LEGAL_ENTITY: "Amir Nardimon, Israeli sole proprietor, HaHarchava 25, Herut 4069100, Israel" }
       - name: sanity-check output before publishing
         run: |
           python - <<'PY'
