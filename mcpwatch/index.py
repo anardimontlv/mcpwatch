@@ -378,6 +378,7 @@ const tx=$('div',null,'min0');tx.append($('h1',r.t,'wrap'),$('p',r.n+' · v'+r.v
 const hd=$('div',null,'sh');hd.append(gr,tx);const dl=$('a','dispute any finding');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
 const hw=$('a','How grading works');hw.href='HOWURL';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. Maintainers can ','mut sm');nt.append(dl,'. ',hw);
 const top=[hd,nt,$('p',r.d,'wrap')];
+const wp=$('p'),wa=$('a','Watch this server','btn');wa.href='/watch?add='+sl;wp.append(wa);top.push(wp);
 if(/^https:\\/\\//.test(r.r)){const p=$('p','Source: ','wrap'),a=$('a',r.r);a.href=r.r;a.rel='nofollow';p.append(a);top.push(p)}
 const k=card('Findings');
 if(!r.f.length)k.append($('p','No issues found by current checks.','mut'));else{
@@ -454,13 +455,13 @@ def write_site(results, out, changes=None):
     web = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
     entity = esc(os.environ.get("MCPWATCH_LEGAL_ENTITY", "the mcpwatch project"))
     titles = {"pricing": "Pricing", "terms": "Terms of Service", "privacy": "Privacy Policy", "refunds": "Refund Policy",
-              "probe": "How the index checks servers", "scan": "Scan your MCP config"}
+              "probe": "How the index checks servers", "scan": "Scan your MCP config", "watch": "Watch servers"}
     for name, title in titles.items():
         with open(os.path.join(web, f"{name}.html"), encoding="utf-8") as fh:
             body = fh.read().replace("{{LEGAL_ENTITY}}", entity)
         with open(f"{out}/{name}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}."))
-    write_scan_assets(out)  # /scan.js for the in-browser scanner
+    write_scan_assets(out)  # /scan.js for the in-browser scanner, /watch.js for the watchlist
     with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
         json.dump(changes or [], fh, separators=(",", ":"))
     with open(f"{out}/changes.html", "w", encoding="utf-8") as fh:
@@ -483,6 +484,7 @@ def write_site(results, out, changes=None):
                 f"<p class='mut sm'>Automated, read-only signal from public data, not an audit or an accusation. Maintainers can "
                 f"<a rel='nofollow' href='{esc(DISPUTE + urllib.request.quote(r['name']))}'>dispute any finding</a>. <a href='{HOW}'>How grading works</a></p>"
                 f"<p class='wrap'>{esc(r['description'][:600])}</p>"
+                f"<p><a class='btn' href='/watch?add={esc(sl)}'>Watch this server</a></p>"
                 + (f"<p class='wrap'>Source: <a rel='nofollow' href='{esc(r['repo'])}'>{esc(r['repo'])}</a></p>" if r['repo'].startswith("https://") else "")
                 + f"<section class='card'><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr></thead><tbody>{rows}</tbody></table></section>"
                 f"<section class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></section>"
@@ -521,7 +523,7 @@ def write_site(results, out, changes=None):
             f"<div class='dist' aria-hidden='true'>{dist}</div><ul class='legend'>"
             + "".join(f"<li>{g(k)} {v:,}</li>" for k, v in counts.items()) + "</ul></section>"
             f"<h2>Quickstart</h2><p class='mut'>Zero dependencies, Python 3.10+. Works with Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs.</p>"
-            f"<pre>pipx install git+{GH}</pre><ol class='steps'>"
+            f"<pre>pipx install mcpwatch-io</pre><ol class='steps'>"
             + "".join(f"<li><h3>{t}</h3><p class='mut sm'>{d}</p><pre>{esc(c)}</pre></li>" for t, d, c in steps) + "</ol>"
             f"<p class='sm'><a href='{GH}#github-action'>Run it as a GitHub Action →</a></p>"
             f"<h2><label for='q'>Look up a server</label></h2>"

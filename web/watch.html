@@ -1,0 +1,27 @@
+<section class="hero"><span class="eye">Free beta</span><h1>Watch your MCP servers</h1>
+<p class="lede">Get one email a day when a server you depend on changes its tools, drops its auth or loses grade. Nothing on quiet days.</p></section>
+<p id="w-note" class="card" hidden></p>
+<div id="w-manage" hidden>
+<section class="card"><h2>Your watchlist</h2><p id="w-who" class="mut sm wrap"></p><ul id="w-list" class="feed"></ul>
+<p class="cta"><button type="button" class="btn" id="w-delete">Delete my account</button></p></section>
+</div>
+<section class="card"><h2 id="w-pick-h">Pick servers</h2>
+<h3><label for="w-q">Search the index</label></h3>
+<input id="w-q" type="search" autocomplete="off" spellcheck="false" placeholder="Server name…">
+<ul id="w-hits" class="feed"></ul>
+<h3><label for="w-cfg">Or paste your MCP config</label></h3>
+<p id="w-cfg-help" class="mut sm">It is read in your browser. Only the matching public server ids are sent, never your config, names, URLs or env.</p>
+<textarea id="w-cfg" rows="8" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="w-cfg-help"></textarea>
+<p class="cta"><button type="button" class="btn" id="w-find">Find servers in config</button></p>
+<ul id="w-found" class="feed"></ul>
+</section>
+<section class="card" id="w-sub"><h2>Selected servers</h2><ul id="w-chosen" class="feed"></ul>
+<p><label for="w-email"><strong>Email</strong></label></p>
+<input id="w-email" type="email" autocomplete="email" style="width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit" spellcheck="false" placeholder="you@example.com">
+<p class="cta"><button type="button" class="btn pri" id="w-go">Start watching (free beta)</button></p>
+<p class="mut sm">We store your email, your watchlist and timestamps, nothing else. Every email has an unsubscribe link that deletes all of it. <a href="/privacy">Privacy</a>.</p></section>
+<p id="w-msg" role="status" aria-live="polite"></p>
+<section class="card"><h2>Already watching?</h2><p class="mut sm">Get a fresh link to manage your list (valid for 30 days).</p>
+<p><label for="w-email2" class="vh">Email</label><input id="w-email2" type="email" autocomplete="email" style="width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit" spellcheck="false" placeholder="you@example.com"></p>
+<p class="cta"><button type="button" class="btn" id="w-link">Email me a manage link</button></p></section>
+<script src="/scan.js"></script><script src="/watch.js"></script>

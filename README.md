@@ -15,7 +15,7 @@ Live index and rug-pull radar: **https://www.mcpwatch.io**
 ## Quickstart
 
 ```bash
-pipx install git+https://github.com/anardimontlv/mcpwatch      # or: pip install git+https://github.com/anardimontlv/mcpwatch
+pipx install mcpwatch-io      # or: pip install mcpwatch-io
 
 # 1. Scan a config for risky setups (leaked secrets, unpinned packages, root filesystem access, plain HTTP, ...)
 mcpwatch-scan ~/.cursor/mcp.json

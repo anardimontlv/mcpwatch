@@ -580,7 +580,48 @@
     return { score: pts, grade, servers: servers.size, findings };
   }
 
-  const api = { scanText, parseJSON, scanServer, scanTools, serversOf, score, shlexSplit };
+  // ---- lookup keys: port of mcpwatch/watch.py url_key / pkg_key / config_keys (tests/test_watch_keys_parity.py) ----
+  const pyStrip = (s) => s.replace(STRIP, "");
+  function urlKey(url) {
+    let p, h;
+    try { p = urlsplit(pyStrip(url)); h = hostname(p); } catch (e) { return null; }
+    return h ? `url:${p.scheme.toLowerCase()}://${h.toLowerCase()}${p.path.replace(/\/+$/, "")}` : null;
+  }
+  function pkgKey(kind, ident) {
+    ident = pyStrip(ident);
+    if (kind === "npm") {
+      const name = partition(ident.startsWith("@") ? ident.slice(1) : ident, "@")[0];
+      return "npm:" + (ident.startsWith("@") ? "@" : "") + name.toLowerCase();
+    }
+    if (kind === "pypi") return "pypi:" + ident.split(/[=<>~!\[@]/)[0].toLowerCase().replace(/_/g, "-");
+    if (kind === "oci") {
+      let img = partition(ident, "@")[0];
+      if (img.slice(img.lastIndexOf("/") + 1).includes(":")) img = img.slice(0, img.lastIndexOf(":"));
+      return "oci:" + img.toLowerCase();
+    }
+    return null;
+  }
+  // Throws (like shlex.split) on an unclosed quote in a string "args".
+  function configKeys(cfg) {
+    let url = get(cfg, "url", null);
+    if (!truthy(url)) url = get(cfg, "serverUrl", null);
+    if (typeof url === "string") { const k = urlKey(url); return k ? [k] : []; }
+    const cmd = typeof get(cfg, "command", null) === "string" ? cfg.get("command") : "";
+    let args = get(cfg, "args", null);
+    args = typeof args === "string" ? shlexSplit(args) : Array.isArray(args) ? args.map(pyStr) : [];
+    const base = (c) => removeSuffix(removeSuffix(c.replace(/\\/g, "/").split("/").pop(), ".cmd"), ".exe");
+    let exe = base(cmd);
+    if (exe === "cmd" && args.length >= 2 && args[0].toLowerCase() === "/c") { exe = base(args[1]); args = args.slice(2); }
+    const plain = args.filter((a) => !a.startsWith("-"));
+    if (["npx", "bunx", "pnpx"].includes(exe) && plain.length) return [pkgKey("npm", plain[0])];
+    if (["uvx", "pipx"].includes(exe) && plain.length) {
+      return [pkgKey("pypi", exe === "pipx" && plain[0] === "run" && plain.length > 1 ? plain[plain.length - 1] : plain[0])];
+    }
+    if (["docker", "podman"].includes(exe)) return plain.slice(1).filter((a) => a.includes("/") || a.includes(":")).map((a) => pkgKey("oci", a)).slice(-1);
+    return [];
+  }
+
+  const api = { scanText, parseJSON, scanServer, scanTools, serversOf, score, shlexSplit, urlKey, pkgKey, configKeys, isDict };
   root.mcpwatchScan = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
