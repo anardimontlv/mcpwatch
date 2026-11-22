@@ -15,3 +15,19 @@ jobs:
       - uses: actions/setup-node@v4  # for the browser-scanner parity test
         with: { node-version: "22" }
       - run: python -m unittest -q
+  action-e2e:  # the published Marketplace Action, on a real runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan passes below the threshold (fixture has one medium finding)
+        uses: anardimontlv/mcpwatch-action@v1
+        with: { config: tests/fixtures/action-e2e.mcp.json, fail-on: high }
+      - name: scan fails at the threshold
+        id: strict
+        continue-on-error: true
+        uses: anardimontlv/mcpwatch-action@v1
+        with: { config: tests/fixtures/action-e2e.mcp.json, fail-on: medium }
+      - name: assert the strict scan failed
+        env: { OUTCOME: "${{ steps.strict.outcome }}" }
+        run: test "$OUTCOME" = "failure"
