@@ -86,16 +86,34 @@ def ident(x):
     return x if isinstance(x, str) and IDENT.fullmatch(x) else "(non-standard name withheld)"
 
 
+FIXED = {  # default deny: every detail is our wording; only validated identifiers/grades/dates are interpolated
+    "auth_dropped": "endpoint stopped requiring credentials",
+    "auth_added": "endpoint now requires credentials; tools can no longer be verified",
+    "fingerprints_lost": "tools are no longer publicly verifiable",
+    "gone": "no longer in the public index, or its lookup is now ambiguous",
+    "reassigned": "lookup now resolves to a different index entry than the one pinned",
+    "not_locked": "not in the lock file; run `mcpwatch lock` to pin it",
+    "newly_indexed": "now in the public index; run `mcpwatch lock` to pin its tools",
+    "removed_from_config": "pinned in the lock file but no longer in the config",
+}
+KINDS = set(FIXED) | {"tool_changed", "tool_added", "tool_removed", "package_changed", "grade_changed", "stale"}
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def safe_detail(item):
-    """Drift detail rebuilt from structured parts; third-party names pass only as identifiers."""
-    kind, d = item["kind"], str(item["detail"])
+    """Drift detail rebuilt from fixed text and validated parts only."""
+    kind, d = item.get("kind"), str(item.get("detail", ""))
     if kind in ("tool_changed", "tool_added", "tool_removed"):
         return ident(d)
     if kind == "package_changed":  # "<package> <old> -> <new>"
-        return " ".join(t if t == "->" else ident(t) for t in d.split())
+        parts = d.split()
+        return " ".join(ident(t) for t in parts if t != "->") if len(parts) == 4 else "package version changed"
     if kind == "grade_changed":
         return d if re.fullmatch(r"[A-F] -> [A-F]", d) else "grade changed"
-    return d  # our own fixed wording (auth/stale/gone/reassigned/not_locked/...) with slugs we generate
+    if kind == "stale":
+        m = DATE.search(d)
+        return f"tools last verified {m.group(0) if m else 'never'}; older than the allowed window"
+    return FIXED.get(kind, "drift detected (see the CLI output for details)")
 
 
 UNTRUSTED_NOTE = "Results come from third-party public data. Free-form third-party text is withheld; see page_url for details."
@@ -156,7 +174,8 @@ def check_drift(args):
         now = watch.snapshot(servers)
     except Exception as e:
         raise ToolError(f"cannot reach the index at {watch.BASE}: {e}")
-    items = [{"server": i["server"], "kind": i["kind"], "severity": i["sev"], "detail": safe_detail(i)}
+    items = [{"server": ident(i["server"]), "kind": i["kind"] if i["kind"] in KINDS else "other",
+              "severity": i["sev"] if i["sev"] in ("high", "medium", "low") else "medium", "detail": safe_detail(i)}
              for i in watch.drift_items(locked, now, max_stale)]  # same rules as `mcpwatch.watch check`
     unverifiable = [n for n in now if n in locked and not locked[n].get("slug")]
     drift = any(i["severity"] in ("high", "medium") for i in items)

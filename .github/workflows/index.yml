@@ -2,7 +2,9 @@ name: daily index
 on:
   schedule: [{ cron: "17 4 * * *" }]
   workflow_dispatch:
-  push: { branches: [main], paths: ["mcpwatch/**", "tests/**", "api/**", "vercel.json"] }
+  push:  # only files the published site is built from
+    branches: [main]
+    paths: ["mcpwatch/index.py", "mcpwatch/scan.py", "mcpwatch/watch.py", "mcpwatch/webscan.py", "web/**", "api/**", "vercel.json"]
 permissions: { contents: write }
 concurrency: { group: index, cancel-in-progress: true }
 jobs:
