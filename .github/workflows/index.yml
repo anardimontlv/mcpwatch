@@ -43,6 +43,15 @@ jobs:
           assert s["servers"] > 1000, s  # a broken registry fetch must not wipe the public index
           print(s)
           PY
+      - name: radar bot (aggregate daily post; weekly dev.to article on Mondays)
+        continue-on-error: true  # social posting must never block publishing
+        env:
+          BLUESKY_HANDLE: "${{ secrets.BLUESKY_HANDLE }}"
+          BLUESKY_APP_PASSWORD: "${{ secrets.BLUESKY_APP_PASSWORD }}"
+          MASTODON_INSTANCE: "${{ secrets.MASTODON_INSTANCE }}"
+          MASTODON_TOKEN: "${{ secrets.MASTODON_TOKEN }}"
+          DEVTO_API_KEY: "${{ secrets.DEVTO_API_KEY }}"
+        run: python -m mcpwatch.announce --site site --state hist
       - name: append today's changes to the history branch (kept forever, this is the moat)
         run: |
           cd hist
