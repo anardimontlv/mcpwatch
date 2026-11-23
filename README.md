@@ -84,6 +84,9 @@ tools are removed from `tools/list`, and calls to them are refused before they r
 
 Without an approved entry for `--name` the guard refuses to start. Re-run `mcpwatch lock --live` after you review a change.
 
+See it work in 10 seconds: [examples/rug-pull-demo](examples/rug-pull-demo) runs a server that turns malicious mid-life,
+and shows `check` failing with the diff and `guard` blocking it.
+
 ## Lookup API
 
 Is an MCP server in the index, and how does it grade? For registries, agent platforms and IDEs:
