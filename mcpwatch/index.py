@@ -402,20 +402,20 @@ const covered=k=>(k==='auth_dropped'&&nb.some(w=>w.includes('credentials')))||(k
 it.changes.filter(c=>!covered(c.kind)).forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);return li};
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
 if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
-days.forEach(d=>{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
+days.forEach(d=>{try{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
 s.append($('h2',d.date));
 const h=$('h3',hot.length?hot.length+' notable change'+(hot.length===1?'':'s'):'No notable changes');s.append(h);
 if(hot.length){const ul=$('ul',null,'feed');hot.slice(0,200).forEach(i=>ul.append(row(i)));s.append(ul)}
 else s.append($('p','Nothing matched our checks for dropped auth, falling grades or suspicious tool text.','mut'));
 if(rest.length){const det=$('details'),sm=$('summary',rest.length+' routine update'+(rest.length===1?'':'s')+' (reworded descriptions, new or removed tools)');
-const pub=i=>i.name.split('/')[0],by={};rest.forEach(i=>(by[pub(i)]=by[pub(i)]||[]).push(i));
+const pub=i=>String(i.name).split('/')[0],by=new Map();rest.forEach(i=>{const k=pub(i);if(!by.has(k))by.set(k,[]);by.get(k).push(i)});
 const ul=$('ul',null,'feed');let shown=0;
-Object.keys(by).sort((x,y)=>by[y].length-by[x].length).forEach(p=>{const g=by[p];
+[...by.keys()].sort((x,y)=>by.get(y).length-by.get(x).length).forEach(p=>{const g=by.get(p);
  if(g.length>10){const li=$('li'),d2=$('details'),s2=$('summary',p+': '+g.length+' servers from one publisher updated their tools'),u2=$('ul',null,'feed');
   g.slice(0,100).forEach(i=>u2.append(row(i)));d2.append(s2,u2);li.append(d2);ul.append(li)}
  else g.forEach(i=>{if(shown++<300)ul.append(row(i))})});
 det.append(sm,ul);s.append(det)}
-box.append(s)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
+box.append(s)}catch(e){box.append($('p','Could not render the changes for '+String(d&&d.date),'mut'))}})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
 SEARCH_JS = """
