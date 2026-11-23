@@ -15,6 +15,7 @@ module.exports = L.handler(async (req, res) => {
      WHERE confirm_hash = $1 AND confirm_expires > now() RETURNING id`, [L.hash(t)]);
   if (!user) throw new L.HttpError(410, "this link was already used or has expired (links last 24 hours): start again from the watch page");
   await L.sql(`UPDATE watches SET pending = false WHERE user_id = $1`, [user.id]);
+  await L.sql(`UPDATE users SET team_owner = invited_by, invited_by = NULL WHERE id = $1 AND invited_by IS NOT NULL`, [user.id]); // accepted a team invite
   const manage = await L.issueToken(user.id, "manage");
   L.send(res, 200, { ok: true, manage });
 });

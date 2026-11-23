@@ -115,6 +115,9 @@ function ensureSchema() {
       `DELETE FROM webhook_events WHERE received_at < now() - interval '90 days'`,
       `CREATE INDEX IF NOT EXISTS ratelimit_k_at ON ratelimit (k, at)`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook text`, // optional Slack incoming-webhook URL (a credential)
+      // Team seats: a member gets the owner's watchlist alerts. invited_by is set until the emailed link is confirmed.
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS team_owner bigint REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS invited_by bigint REFERENCES users(id) ON DELETE SET NULL`,
     ]) await sql(q);
   })().catch((e) => { schema = null; throw e; });
   return schema;
@@ -138,6 +141,7 @@ async function issueToken(userId, kind) {
 const EFFECTIVE_PLAN = `CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', 'trialing')
   OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END`;
 // Team features: open to everyone in the free beta, the team plan once billing is on.
+const TEAM_SEATS = () => envInt("TEAM_SEATS", 10);
 const teamAllowed = (plan) => !billingEnabled() || plan === "team";
 const billingEnabled = () => /^(1|true|yes|on)$/i.test(process.env.BILLING_ENABLED || "");
 const envInt = (k, d) => (/^\d+$/.test(process.env[k] || "") ? Number(process.env[k]) : d);
@@ -148,7 +152,7 @@ function planLimit(plan) {
 
 // The user behind an unexpired token of exactly this kind (with effective plan), or undefined.
 const tokenUser = async (kind, t) => (await sql(
-  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id, u.slack_webhook
+  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id, u.slack_webhook, u.team_owner
    FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = $1 AND t.kind = $2 AND t.expires_at > now()`,
   [hash(t), kind]))[0];
 // Deletes the user behind an unexpired token of this kind; tokens and watches go with it (ON DELETE CASCADE).
@@ -275,5 +279,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, teamAllowed, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, teamAllowed, TEAM_SEATS, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };

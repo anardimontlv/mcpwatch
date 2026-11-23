@@ -1,4 +1,4 @@
-// POST /api/manage {token, action: list|add|remove|slack|delete_account, slugs?, url?}, or {action: "email_link", email}.
+// POST /api/manage {token, action: list|add|remove|slack|invite|remove_member|leave_team|delete_account, slugs?, url?, email?}, or {action: "email_link", email}.
 const L = require("./_lib");
 
 const LINK_SENT = { ok: true, message: "If that address has a confirmed watchlist, a new manage link is on its way." };
@@ -23,7 +23,7 @@ module.exports = L.handler(async (req, res) => {
     }
     return L.send(res, 200, LINK_SENT);
   }
-  if (!["list", "add", "remove", "slack", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
+  if (!["list", "add", "remove", "slack", "invite", "remove_member", "leave_team", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
   if (typeof body.token !== "string" || !L.TOKEN.test(body.token)) throw new L.HttpError(403, "invalid or expired manage link");
   await L.ensureSchema();
   if (action === "delete_account") {
@@ -58,7 +58,39 @@ module.exports = L.handler(async (req, res) => {
     await L.sql(`UPDATE users SET slack_webhook = $2 WHERE id = $1`, [user.id, url || null]);
     slack = Boolean(url);
   }
+  // Team seats (owner side): invite by email, remove a member or a pending invite
+  const teamOk = L.teamAllowed(user.plan) && !user.team_owner;
+  if (action === "invite") {
+    if (!teamOk) throw new L.HttpError(user.team_owner ? 400 : 402, user.team_owner ? "leave your current team before inviting people" : "team seats are part of the Team plan");
+    const email = L.cleanEmail(body.email);
+    if (email === user.email) throw new L.HttpError(400, "you are already on your team");
+    const [{ n }] = await L.sql(`SELECT count(*) AS n FROM users WHERE (team_owner = $1 OR invited_by = $1) AND email <> $2`, [user.id, email]);
+    if (Number(n) >= L.TEAM_SEATS()) throw new L.HttpError(400, `a team has up to ${L.TEAM_SEATS()} members besides you`);
+    if (await L.limited("invite", user.id, 20)) throw new L.HttpError(429, "too many invitations, try again in an hour");
+    const [m] = await L.sql(`INSERT INTO users (email) VALUES ($1) ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id, team_owner`, [email]);
+    if (String(m.team_owner || "") !== String(user.id) && !(await L.limited("mail", email, 3))) {
+      const t = L.newToken(), unsub = await L.issueToken(m.id, "unsub");
+      await L.sql(`UPDATE users SET confirm_hash = $2, confirm_expires = now() + interval '7 days', invited_by = $3 WHERE id = $1`, [m.id, L.hash(t), user.id]);
+      await L.sendMail({ to: email, subject: "You are invited to an mcpwatch team",
+        text: `${user.email} invited you to their mcpwatch team. Members get an alert when an MCP server on the team's watchlist changes.\n\n` +
+          `Accept: ${L.SITE}/api/confirm?t=${t}\n\nThe link works once and expires in 7 days. If you do not want this, ignore this email.\n\n` +
+          `Delete this address from mcpwatch now: ${L.unsubLink(unsub)}\n` });
+    }
+  }
+  if (action === "remove_member") {
+    const email = L.cleanEmail(body.email);
+    await L.sql(`UPDATE users SET team_owner = CASE WHEN team_owner = $1 THEN NULL ELSE team_owner END,
+      invited_by = CASE WHEN invited_by = $1 THEN NULL ELSE invited_by END,
+      confirm_hash = CASE WHEN invited_by = $1 THEN NULL ELSE confirm_hash END WHERE email = $2`, [user.id, email]);
+  }
+  if (action === "leave_team") await L.sql(`UPDATE users SET team_owner = NULL WHERE id = $1`, [user.id]);
+  const team = action === "leave_team" ? null : user.team_owner;
+  const members = teamOk ? await L.sql(`SELECT email, team_owner IS NOT NULL AND team_owner = $1 AS joined FROM users
+    WHERE team_owner = $1 OR invited_by = $1 ORDER BY email`, [user.id]) : [];
+  const [owner] = team ? await L.sql(`SELECT email FROM users WHERE id = $1`, [team]) : [];
   const rows = await L.sql(`SELECT slug, added_at FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
   L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), since: Object.fromEntries(rows.map((r) => [r.slug, r.added_at])),
-    max: limit, limit, plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed, team_allowed: L.teamAllowed(user.plan) });
+    max: limit, limit, plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed, team_allowed: L.teamAllowed(user.plan),
+    seats: teamOk ? L.TEAM_SEATS() : 0, members: members.map((m) => ({ email: m.email, joined: m.joined === true || m.joined === "t" || m.joined === "true" })),
+    team_of: owner ? owner.email : null });
 });

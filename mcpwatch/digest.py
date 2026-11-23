@@ -80,13 +80,19 @@ EFFECTIVE_PLAN = ("CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', '
 
 def watchers(slugs, query):
     """{email: {"id", "plan", "slugs"}} for confirmed users watching any of `slugs`. One query."""
+    # own watches, plus (Team seats) every confirmed member gets the owner's watches at the owner's plan
     rows = query("SELECT u.id, u.email, u.slack_webhook, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users u JOIN watches w ON w.user_id = u.id "
                  "WHERE u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
-                 "ORDER BY u.email, w.slug", [json.dumps(sorted(slugs))])
+                 "UNION SELECT m.id, m.email, m.slack_webhook, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users m "
+                 "JOIN users u ON m.team_owner = u.id JOIN watches w ON w.user_id = u.id "
+                 "WHERE m.confirmed AND u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
+                 "ORDER BY 2, 4", [json.dumps(sorted(slugs))])
     out = {}
     for r in rows:
         u = out.setdefault(r["email"], {"id": r["id"], "plan": r.get("plan") or "free", "slack": r.get("slack_webhook"), "slugs": set()})
         u["slugs"].add(r["slug"])
+        if (r.get("plan") or "free") != "free":  # a team member's own free rows never downgrade the owner's plan
+            u["plan"] = r["plan"]
     return out
 
 

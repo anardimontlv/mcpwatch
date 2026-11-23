@@ -5,6 +5,10 @@
 <section class="card"><h2>Your watchlist</h2><p id="w-who" class="mut sm wrap"></p><ul id="w-list" class="feed"></ul>
 <p class="cta" id="w-bill" hidden></p>
 <p class="cta"><button type="button" class="btn" id="w-delete">Delete my account</button></p></section>
+<section class="card" id="w-team" hidden><h2>Team</h2><p id="w-team-st" class="mut sm wrap"></p><ul id="w-members" class="feed"></ul>
+<div id="w-inv"><p><label for="w-inv-email" class="vh">Teammate email</label><input id="w-inv-email" type="email" autocomplete="off" spellcheck="false" style="width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit" placeholder="teammate@example.com"></p>
+<p class="cta"><button type="button" class="btn" id="w-inv-go">Invite to team</button></p></div>
+<p class="cta" id="w-leave-p" hidden><button type="button" class="btn" id="w-leave">Leave team</button></p></section>
 <section class="card" id="w-export" hidden><h2>Audit export</h2><p class="mut sm">Evidence for security reviews: every server you watch, since when, its current grade, findings, auth and recent changes. Built in your browser from the public index.</p>
 <p class="cta"><button type="button" class="btn" id="w-exp-csv">Download CSV</button> <button type="button" class="btn" id="w-exp-json">Download JSON</button></p></section>
 <section class="card" id="w-slack"><h2>Slack alerts</h2><p id="w-slack-st" class="mut sm">Also post the daily digest to a Slack channel. In Slack, create an <a href="https://api.slack.com/messaging/webhooks">incoming webhook</a> and paste its URL.</p>

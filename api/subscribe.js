@@ -16,7 +16,8 @@ module.exports = L.handler(async (req, res) => {
   await L.addWatches(user.id, slugs, true, L.planLimit(user.plan)); // pending until the link is clicked: nobody can edit a list they can't read mail for
   if (await L.limited("mail", email, 3)) return L.send(res, 200, OK);
   const token = L.newToken();
-  await L.sql(`UPDATE users SET confirm_hash = $2, confirm_expires = now() + interval '24 hours' WHERE id = $1`, [user.id, L.hash(token)]);
+  // a new confirmation link replaces any pending team invite: confirming your own sign-up never joins a team
+  await L.sql(`UPDATE users SET confirm_hash = $2, confirm_expires = now() + interval '24 hours', invited_by = NULL WHERE id = $1`, [user.id, L.hash(token)]);
   const unsub = await L.issueToken(user.id, "unsub");
   await L.sendMail({
     to: email,

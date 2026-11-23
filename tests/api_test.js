@@ -65,7 +65,7 @@ function fakeSql(q, p) {
   if (q.includes("INSERT INTO users")) {
     let u = user((x) => x.email === p[0]);
     if (!u) db.users.push((u = { id: String(++db.seq), email: p[0], confirmed: false, created_at: now, plan: "free" }));
-    return [{ id: u.id, plan: effPlan(u) }];
+    return [{ id: u.id, plan: effPlan(u), team_owner: u.team_owner || null }];
   }
   if (q.includes("INSERT INTO watches")) {
     const [uid, json, pending, limit] = p;
@@ -80,9 +80,32 @@ function fakeSql(q, p) {
     return [];
   }
   if (q.includes("SET confirm_hash = $2")) {
-    Object.assign(user((x) => x.id === p[0]), { confirm_hash: p[1], confirm_expires: now + 24 * 3600e3 });
+    Object.assign(user((x) => x.id === p[0]), { confirm_hash: p[1], confirm_expires: now + (q.includes("7 days") ? 7 : 1) * 24 * 3600e3,
+      invited_by: p[2] ?? null });
     return [];
   }
+  if (q.startsWith("UPDATE users SET team_owner = invited_by")) {
+    const u = user((x) => x.id === p[0]);
+    if (u.invited_by) Object.assign(u, { team_owner: u.invited_by, invited_by: null });
+    return [];
+  }
+  if (q.startsWith("SELECT count(*) AS n FROM users WHERE (team_owner = $1 OR invited_by = $1)")) {
+    return [{ n: String(db.users.filter((x) => (x.team_owner === p[0] || x.invited_by === p[0]) && x.email !== p[1]).length) }];
+  }
+  if (q.startsWith("UPDATE users SET team_owner = CASE")) {
+    const u = user((x) => x.email === p[1]);
+    if (u) {
+      const inv = u.invited_by === p[0];
+      Object.assign(u, { team_owner: u.team_owner === p[0] ? null : u.team_owner, invited_by: inv ? null : u.invited_by, confirm_hash: inv ? null : u.confirm_hash });
+    }
+    return [];
+  }
+  if (q.startsWith("UPDATE users SET team_owner = NULL WHERE id = $1")) { user((x) => x.id === p[0]).team_owner = null; return []; }
+  if (q.startsWith("SELECT email, team_owner IS NOT NULL")) {
+    return db.users.filter((x) => x.team_owner === p[0] || x.invited_by === p[0]).sort((a, b) => a.email.localeCompare(b.email))
+      .map((x) => ({ email: x.email, joined: x.team_owner === p[0] ? "t" : "f" }));
+  }
+  if (q === "SELECT email FROM users WHERE id = $1") return db.users.filter((x) => x.id === p[0]).map((x) => ({ email: x.email }));
   if (q.includes("INSERT INTO tokens")) {
     const [uid, kind, h, ttl] = p;
     db.tokens.push({ user_id: uid, kind, hash: h, seq: ++db.seq, expires_at: now + Number(/^(\d+) days$/.exec(ttl)[1]) * 86400e3 });
@@ -92,7 +115,7 @@ function fakeSql(q, p) {
     const t = live(p[0], p[1]);
     const u = t && user((x) => x.id === t.user_id);
     return u ? [{ id: u.id, email: u.email, plan: effPlan(u), paddle_customer_id: u.paddle_customer_id || null,
-      paddle_subscription_id: u.paddle_subscription_id || null, slack_webhook: u.slack_webhook || null }] : [];
+      paddle_subscription_id: u.paddle_subscription_id || null, slack_webhook: u.slack_webhook || null, team_owner: u.team_owner || null }] : [];
   }
   if (q.startsWith("UPDATE users SET slack_webhook = $2")) { user((x) => x.id === p[0]).slack_webhook = p[1]; return []; }
   if (q === "SELECT slug FROM watches WHERE user_id = $1") return db.watches.filter((w) => w.user_id === p[0]).map((w) => ({ slug: w.slug }));
@@ -430,6 +453,41 @@ test("slack: Pro only once billing is on", async () => {
   assert.equal(slackPosts.length, 0);
   db.users[0].plan = "pro"; db.users[0].plan_status = "active";
   assert.equal((await call(manage, { body: { token: tok, action: "slack", url: HOOK } })).status, 200);
+});
+
+test("team seats: invite, accept through the emailed link, list, remove; member can leave; seat cap", async () => {
+  const owner = await signUp("own@example.com", [KNOWN[0]]);
+  const op = (body, t = owner) => call(manage, { body: { token: t, ...body } });
+  const r = await op({ action: "invite", email: "Mem@Example.com" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.members, [{ email: "mem@example.com", joined: false }]);
+  const inv = mails.at(-1);
+  assert.equal(inv.to, "mem@example.com");
+  assert.match(inv.text, /own@example\.com invited you/);
+  const acc = await call(confirm, { url: "/api/confirm", body: { t: confirmTok(inv) } });
+  assert.equal(acc.status, 200);
+  const mem = acc.json.manage;
+  assert.deepEqual((await op({ action: "list" })).json.members, [{ email: "mem@example.com", joined: true }]);
+  const ml = await op({ action: "list" }, mem);
+  assert.equal(ml.json.team_of, "own@example.com");
+  assert.equal((await op({ action: "invite", email: "x@example.com" }, mem)).status, 400, "a member can't invite");
+  assert.equal((await op({ action: "leave_team" }, mem)).json.team_of, null);
+  assert.equal(db.users.find((u) => u.email === "mem@example.com").team_owner, null);
+  // a self sign-up never joins a team, even with a pending invite
+  await op({ action: "invite", email: "late@example.com" });
+  await signUp("late@example.com", [KNOWN[1]]);
+  assert.equal(db.users.find((u) => u.email === "late@example.com").team_owner ?? null, null);
+  // remove a pending invite: its link stops working
+  await op({ action: "invite", email: "gone@example.com" });
+  const goneMail = mails.at(-1);
+  await op({ action: "remove_member", email: "gone@example.com" });
+  assert.equal((await call(confirm, { url: "/api/confirm", body: { t: confirmTok(goneMail) } })).status, 410);
+  process.env.TEAM_SEATS = "1";
+  await op({ action: "invite", email: "a1@example.com" });
+  assert.equal((await op({ action: "invite", email: "a2@example.com" })).status, 400, "seat cap");
+  delete process.env.TEAM_SEATS;
+  billingOn();
+  assert.equal((await op({ action: "invite", email: "a3@example.com" })).status, 402, "Team plan only once billing is on");
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------

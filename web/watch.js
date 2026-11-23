@@ -89,9 +89,35 @@
     renderBilling(d);
     renderSlack(d);
     $("w-export").hidden = !d.team_allowed;
+    renderTeam(d);
     last = d;
     return true;
   }
+
+  // ---- team seats: owners invite and remove; members see whose team they are on and can leave ----
+  function renderTeam(d) {
+    const box = $("w-team"), ul = $("w-members");
+    box.hidden = !d.seats && !d.team_of;
+    ul.replaceChildren();
+    $("w-inv").hidden = !d.seats;
+    $("w-leave-p").hidden = !d.team_of;
+    if (d.team_of) { $("w-team-st").textContent = "You are on " + d.team_of + "'s team: you also get alerts for the team's watchlist."; return; }
+    if (!d.seats) return;
+    const used = (d.members || []).length;
+    $("w-team-st").textContent = "Teammates get the alerts for your watchlist, by email and their own Slack. " + used + " of " + d.seats + " seats used.";
+    for (const m of d.members || []) {
+      const li = el("li"), b = el("button", "Remove", "btn");
+      b.type = "button";
+      b.addEventListener("click", () => manage("remove_member", undefined, { email: m.email }));
+      li.append(el("span", m.email, "wrap"), " ", el("span", m.joined ? "member" : "invited", "mut sm"), " ", b);
+      ul.append(li);
+    }
+  }
+  $("w-inv-go").addEventListener("click", async () => {
+    const e = $("w-inv-email").value;
+    if (await manage("invite", undefined, { email: e })) { $("w-inv-email").value = ""; msg("Invitation sent: it is valid for 7 days."); }
+  });
+  $("w-leave").addEventListener("click", () => { if (confirm("Leave this team? You will stop getting its alerts.")) manage("leave_team"); });
 
   // ---- audit export (Team): built in the browser from the public index + this account's watch dates ----
   let last = null;

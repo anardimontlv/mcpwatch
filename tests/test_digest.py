@@ -14,9 +14,9 @@ CHANGES = [{"date": TODAY, "items": [B, A, C]}, {"date": "2026-11-21", "items": 
 
 
 class FakeDB:
-    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com"), plans=None, slack=None):
+    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com"), plans=None, slack=None, members=None):
         self.watches, self.confirmed, self.queries, self.unsub, self.plans = watches, set(confirmed), [], {}, plans or {}
-        self.slack = slack or {}
+        self.slack, self.members = slack or {}, members or {}  # members: {member email: owner email}
         self.ids = {e: str(i) for i, e in enumerate(sorted({e for e, _ in watches}), 1)}
 
     def __call__(self, q, params):
@@ -24,8 +24,13 @@ class FakeDB:
         if q.startswith("SELECT u.id, u.email"):
             wanted = set(json.loads(params[0]))
             assert "AS plan" in q and "past_due_since > now() - interval '7 days'" in q  # plan is enforced by status in SQL
-            return [{"id": self.ids[e], "email": e, "slug": s, "plan": self.plans.get(e, "free"), "slack_webhook": self.slack.get(e)}
-                    for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
+            assert "UNION" in q and "m.team_owner = u.id" in q
+            row = lambda e, s, plan_of: {"id": self.ids.get(e, e), "email": e, "slug": s, "plan": self.plans.get(plan_of, "free"),
+                                         "slack_webhook": self.slack.get(e)}
+            own = [row(e, s, e) for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
+            team = [row(m, s, o) for m, o in self.members.items() for e, s in sorted(self.watches)
+                    if e == o and s in wanted and m in self.confirmed and o in self.confirmed]
+            return sorted(own + team, key=lambda r: (r["email"], r["slug"]))
         if q.startswith("INSERT INTO tokens") and "'unsub'" in q:
             self.unsub.setdefault(params[0], []).append(params[1])  # older tokens are kept, not replaced
             return []
@@ -35,6 +40,17 @@ class FakeDB:
 
 
 HOOK = "https://hooks.slack.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234"
+
+
+class Team(unittest.TestCase):
+    def test_members_get_the_owners_watchlist_at_the_owners_plan(self):
+        db = FakeDB([("ann@example.com", A["slug"]), ("ann@example.com", B["slug"])],
+                    confirmed=("ann@example.com", "mia@example.com", "zed@example.com"), plans={"ann@example.com": "team"},
+                    members={"mia@example.com": "ann@example.com", "pat@example.com": "ann@example.com"})
+        sent = []
+        with redirect_stdout(io.StringIO()):
+            digest.run(CHANGES, TODAY, db, lambda to, *a: sent.append(to) or True, billing=True)
+        self.assertEqual(sent, ["ann@example.com", "mia@example.com"], "confirmed member gets it daily; unconfirmed invitee does not")
 
 
 class Slack(unittest.TestCase):
