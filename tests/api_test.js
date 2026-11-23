@@ -129,6 +129,7 @@ function fakeSql(q, p) {
   }
   if (q.startsWith("INSERT INTO claim_pins")) return [];
   if (q.startsWith("SELECT repo_id, owner_id FROM claim_pins")) return db.pins && db.pins[p[0]] ? [db.pins[p[0]]] : [];
+  if (q.startsWith("SELECT repo, responses, verified_at > now()")) return (db.claims || []).filter((c) => c.slug === p[0]).map((c) => ({ ...c, fresh: c.stale ? "f" : "t" }));
   if (q.startsWith("SELECT repo, responses, verified_at FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
   if (q.startsWith("DELETE FROM maintainer_claims")) { db.claims = (db.claims || []).filter((c) => c.slug !== p[0]); return []; }
   if (q.startsWith("INSERT INTO maintainer_claims")) {
@@ -633,6 +634,8 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   file = `claim: ${id}`;
   assert.equal((await post({ slug: id })).status, 200);
   ghInfo = { id: "999", owner_id: "888", owner: "acme" };
+  assert.equal((await post({ slug: id })).status, 200, "identical file within 24h: status quo kept, nothing changes");
+  db.claims.find((c) => c.slug === id).stale = true; // a day later the identity is re-checked
   assert.equal((await post({ slug: id })).status, 409);
   assert.equal((await get(claim, "/api/claim?slug=" + id)).json.claimed, false);
   // revoke (file removed), then the impostor re-adds it: the pin survived, still refused
@@ -643,8 +646,16 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   // per-server GitHub budget: 3 checks/hour per server, whoever asks
   db.rl = [];
   ghInfo = { id: "111", owner_id: "222", owner: "acme" };
-  for (let i = 0; i < 3; i++) await call(claim, { url: "/api/claim", body: { slug: id }, ip: "8.8.8." + i });
-  assert.equal((await call(claim, { url: "/api/claim", body: { slug: id }, ip: "9.9.9.9" })).status, 429);
+  for (let i = 0; i < 3; i++) { file = `claim: ${id}\nMW005: ${["intended", "fixing", "false-positive"][i]}`; await call(claim, { url: "/api/claim", body: { slug: id }, ip: "8.8.8." + i }); }
+  file = `claim: ${id}\nMW005: intended`;
+  assert.equal((await call(claim, { url: "/api/claim", body: { slug: id }, ip: "9.9.9.9" })).status, 429, "changes are budgeted");
+  // re-verifying an unchanged claim is free: strangers can't drain anything
+  file = `claim: ${id}\nMW005: false-positive`;
+  for (let i = 0; i < 5; i++) {
+    const r = await call(claim, { url: "/api/claim", body: { slug: id }, ip: "5.5.5." + i });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.unchanged, true);
+  }
   db.rl = [];
   // no claim line -> GitHub API never called
   let ghCalls = 0;

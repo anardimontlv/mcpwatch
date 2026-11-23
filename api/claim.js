@@ -77,6 +77,14 @@ module.exports = L.handler(async (req, res) => {
     await L.sql(`DELETE FROM maintainer_claims WHERE slug = $1`, [slug]); // claim file gone or no longer lists this server
     throw new L.HttpError(404, `no .mcpwatch file in ${repo} (default branch) with the line "claim: ${slug}". GitHub can take ~5 minutes to serve a new file`);
   }
+  // unchanged since a verification in the last 24 hours: nothing the page shows can change, so no GitHub call or budget
+  // (any edit to the file goes through the full identity check below)
+  // identity is still re-checked at least daily, so a hijacked repo serving a copied file can't hold a claim forever
+  const [cur] = await L.sql(`SELECT repo, responses, verified_at > now() - interval '24 hours' AS fresh FROM maintainer_claims WHERE slug = $1`, [slug]);
+  const stable = (o) => JSON.stringify(Object.keys(o || {}).sort().map((k) => [k, o[k]]));
+  if (cur && [true, "t", "true"].includes(cur.fresh) && cur.repo === repo && stable(typeof cur.responses === "string" ? JSON.parse(cur.responses) : cur.responses) === stable(responses)) {
+    return L.send(res, 200, { ok: true, claimed: true, repo, responses, unchanged: true });
+  }
   // only a real claim file reaches the GitHub API; each server gets its own small budget, and a global cap keeps us
   // under GitHub's quota (60/hour unauthenticated, 5,000 with GITHUB_TOKEN)
   if (await L.limited("claim-gh-slug", slug, 3)) throw new L.HttpError(429, "this server was checked recently, try again in an hour");
