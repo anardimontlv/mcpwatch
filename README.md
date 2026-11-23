@@ -81,6 +81,18 @@ tools are removed from `tools/list`, and calls to them are refused before they r
 
 Without an approved entry for `--name` the guard refuses to start. Re-run `mcpwatch lock --live` after you review a change.
 
+## Lookup API
+
+Is an MCP server in the index, and how does it grade? For registries, agent platforms and IDEs:
+
+```
+curl 'https://www.mcpwatch.io/api/v1/lookup?url=https://mcp.example.com/mcp'
+curl 'https://www.mcpwatch.io/api/v1/lookup?package=npm:@scope/server'   # also pypi:name, oci:image, or ?id=<server id>
+```
+
+Returns the id, grade, score, auth status, last verified date and findings as rule codes, never third-party text, so
+it is safe to hand to a model. 60 lookups/hour per IP; a Team report key (`Authorization: Bearer ...`) allows 5,000/hour.
+
 ## What `check` treats as drift
 
 | Change | Severity |

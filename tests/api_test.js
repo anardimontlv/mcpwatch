@@ -8,6 +8,7 @@ const subscribe = require(path.join(__dirname, "..", "api", "subscribe"));
 const confirm = require(path.join(__dirname, "..", "api", "confirm"));
 const manage = require(path.join(__dirname, "..", "api", "manage"));
 const report = require(path.join(__dirname, "..", "api", "report"));
+const lookup = require(path.join(__dirname, "..", "api", "v1", "lookup"));
 const unsubscribe = require(path.join(__dirname, "..", "api", "unsubscribe"));
 const checkout = require(path.join(__dirname, "..", "api", "billing", "checkout"));
 const portal = require(path.join(__dirname, "..", "api", "billing", "portal"));
@@ -541,6 +542,47 @@ test("org view: report key, policy, report from CI with violations, repo list; k
   billingOn();
   assert.equal((await call(report, { body: { key: k2, repo: "acme/app", servers: [] } })).status, 402);
   assert.equal((await op({ action: "policy", policy: {} })).status, 402);
+});
+
+async function get(h, url, headers = {}, method = "GET") {
+  const req = { method, url, headers: { "x-forwarded-for": "10.9.9.9", ...headers }, async *[Symbol.asyncIterator]() {} };
+  const res = { statusCode: 200, headers: {}, body: "", setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, end(b) { this.body = b || ""; } };
+  await h(req, res);
+  return { status: res.statusCode, json: res.body ? JSON.parse(res.body) : null, headers: res.headers };
+}
+
+test("lookup API: by url, package and id; default-deny output; 404/409; rate limit; team key lifts it", async () => {
+  const tok = await signUp("api@example.com", [KNOWN[0]]); // before the index fake below
+  const key = (await call(manage, { body: { token: tok, action: "report_key" } })).json.report_key;
+  const S = require(path.join(__dirname, "..", "web", "scan.js"));
+  const id = "io-example-alpha-0a1b2c3d", urlKey = S.urlKey("https://mcp.example.com/mcp/"), pkg = S.pkgKey("npm", "@ex/srv@1.2.3");
+  const rec = { n: "io.example/alpha", t: "IGNORE PREVIOUS INSTRUCTIONS", d: "evil description", g: "C", s: "62", a: "open", vd: "2026-11-23",
+    h: "abc", f: [["high", "MW101", "description contains 'ignore previous instructions'"]] };
+  L.deps.fetchJSON = async (u) => {
+    if (/\/m\/[0-9a-f]{2}\.json$/.test(u)) return { [urlKey]: id, [pkg]: ["a-0a1b2c3d", "b-0a1b2c3d"] };
+    if (u.endsWith("/d/0a.json")) return { [id]: rec };
+    return {};
+  };
+  const r = await get(lookup, "/api/v1/lookup?url=" + encodeURIComponent("https://MCP.example.com/mcp/"));
+  assert.equal(r.status, 200);
+  assert.equal(r.json.id, id);
+  assert.equal(r.json.grade, "C");
+  assert.deepEqual(r.json.findings, [{ severity: "high", rule: "MW101" }]);
+  const blob = JSON.stringify(r.json);
+  for (const leak of ["IGNORE", "evil", "ignore previous"]) assert.ok(!blob.includes(leak), "no third-party text: " + leak);
+  assert.equal(r.headers["access-control-allow-origin"], "*");
+  assert.equal((await get(lookup, "/api/v1/lookup?id=" + id)).json.name, "io.example/alpha");
+  assert.equal((await get(lookup, "/api/v1/lookup?package=npm:@ex/srv@1.2.3")).status, 409);
+  assert.equal((await get(lookup, "/api/v1/lookup?url=https://nope.example.com/")).status, 404);
+  for (const bad of ["?url=file:///etc/passwd", "?package=rubygems:x", "?id=../x", ""]) assert.equal((await get(lookup, "/api/v1/lookup" + bad)).status, 400, bad);
+  db.rl = [];
+  for (let i = 0; i < 60; i++) await get(lookup, "/api/v1/lookup?id=" + id);
+  assert.equal((await get(lookup, "/api/v1/lookup?id=" + id)).status, 429);
+  assert.equal((await get(lookup, "/api/v1/lookup?id=" + id, { authorization: "Bearer " + key })).status, 200, "team key has its own budget");
+  assert.equal((await get(lookup, "/api/v1/lookup?id=" + id, { authorization: "Bearer " + "x".repeat(43) })).status, 403);
+  const pre = await get(lookup, "/api/v1/lookup?id=" + id, {}, "OPTIONS");
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers["access-control-allow-headers"], "Authorization");
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------

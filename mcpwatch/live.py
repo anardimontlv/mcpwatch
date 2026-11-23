@@ -19,12 +19,21 @@ def expand(v):
     return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: os.environ.get(m.group(1), m.group(0)), str(v))
 
 
+def full_hash(tool):
+    """Hash of the whole tool object (title, annotations, outputSchema, ... included): what the guard approves.
+    `h` (description + inputSchema) stays comparable with the public index fingerprints."""
+    import hashlib
+    return hashlib.sha256(json.dumps(tool, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+
+
 def snapshot_tools(tools):
-    """{name: {"h": hash, "d": description, "s": inputSchema}}: what the lock file keeps for a reviewed diff later."""
+    """{name: {"h", "f", "d", "s", "x"}}: index hash, full hash, description, inputSchema and every other field, so a
+    later check can show exactly what changed."""
     out = {}
     for t in tools:
         if isinstance(t, dict) and isinstance(t.get("name"), str):
-            out[t["name"]] = {"h": tool_hash(t), "d": str(t.get("description", "")), "s": t.get("inputSchema", {})}
+            out[t["name"]] = {"h": tool_hash(t), "f": full_hash(t), "d": str(t.get("description", "")), "s": t.get("inputSchema", {}),
+                              "x": {k: v for k, v in t.items() if k not in ("name", "description", "inputSchema")}}
     return out
 
 
@@ -131,11 +140,12 @@ def live_diff(locked, cur):
             out.append(("medium", "tool_removed", name, []))
         elif b and not a:
             out.append(("high", "tool_added", name, ["+ " + l for l in visible(b["d"]).splitlines()]))
-        elif a["h"] != b["h"]:
+        elif a.get("f", a["h"]) != b.get("f", b["h"]):
             lines = list(difflib.unified_diff(visible(a["d"]).splitlines(), visible(b["d"]).splitlines(), "approved", "now", lineterm="", n=1))
-            sa, sb = (json.dumps(x.get("s", {}), indent=1, sort_keys=True, ensure_ascii=False) for x in (a, b))
-            if sa != sb:
-                lines += list(difflib.unified_diff(visible(sa).splitlines(), visible(sb).splitlines(), "approved schema", "schema now", lineterm="", n=1))
+            for key, label in (("s", "schema"), ("x", "other fields")):
+                sa, sb = (json.dumps(x.get(key, {}), indent=1, sort_keys=True, ensure_ascii=False) for x in (a, b))
+                if sa != sb:
+                    lines += list(difflib.unified_diff(visible(sa).splitlines(), visible(sb).splitlines(), f"approved {label}", f"{label} now", lineterm="", n=1))
             out.append(("high", "tool_changed", name, lines))
     return out
 

@@ -50,24 +50,47 @@ class Live(unittest.TestCase):
 
 
 class GuardUnit(unittest.TestCase):
+    def guard(self, logs):
+        from mcpwatch.live import full_hash
+        return Guard({"search": full_hash(SEARCH), "delete_repo": "000000000000"}, log=logs.append)
+
+    def listed(self, g, tools, cid=7):
+        fwd, _ = g.from_client({"jsonrpc": "2.0", "id": cid, "method": "tools/list"})
+        return fwd, g.from_server({"jsonrpc": "2.0", "id": fwd["id"], "result": {"tools": tools}})
+
     def test_filters_changed_and_new_tools_and_blocks_their_calls(self):
-        from mcpwatch.watch import tool_hash
         logs = []
-        g = Guard({"search": tool_hash(SEARCH), "delete_repo": "000000000000"}, log=logs.append)
-        g.from_client({"jsonrpc": "2.0", "id": 7, "method": "tools/list"})
-        out = g.from_server({"jsonrpc": "2.0", "id": 7, "result": {"tools": [SEARCH, DELETE, {"name": "brand_new"}]}})
+        g = self.guard(logs)
+        _, out = self.listed(g, [SEARCH, DELETE, {"name": "brand_new"}])
+        self.assertEqual(out["id"], 7, "original id restored")
         self.assertEqual([t["name"] for t in out["result"]["tools"]], ["search"])
         self.assertEqual(len(logs), 2)
         fwd, reply = g.from_client({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "delete_repo"}})
         self.assertIsNone(fwd)
         self.assertIn("blocked", reply["error"]["message"])
-        fwd, reply = g.from_client({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "never_listed"}})
+        fwd, _ = g.from_client({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "never_listed"}})
         self.assertIsNone(fwd, "unknown tools are blocked even before a tools/list")
         fwd, reply = g.from_client({"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "search"}})
         self.assertIsNotNone(fwd)
-        self.assertIsNone(reply)
-        # a response that merely reuses an id of a non-list request is untouched
-        self.assertEqual(g.from_server({"jsonrpc": "2.0", "id": 10, "result": {"tools": [DELETE]}})["result"]["tools"], [DELETE])
+        self.assertNotEqual(fwd["id"], 10, "ids are rewritten")
+
+    def test_any_field_change_is_unapproved(self):
+        _, out = self.listed(self.guard([]), [dict(SEARCH, annotations={"destructiveHint": True}), dict(SEARCH, title="Search (now with admin)")])
+        self.assertEqual(out["result"]["tools"], [])
+
+    def test_server_cannot_dodge_the_filter(self):
+        g = self.guard([])
+        fwd, _ = g.from_client({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        # look-alike ids, unsolicited answers, batches and method+result hybrids are all dropped
+        self.assertIsNone(g.from_server({"jsonrpc": "2.0", "id": 2, "result": {"tools": [DELETE]}}))
+        self.assertIsNone(g.from_server({"jsonrpc": "2.0", "id": 2.0, "result": {"tools": [DELETE]}}))
+        self.assertIsNone(g.from_server([{"jsonrpc": "2.0", "id": fwd["id"], "result": {"tools": [DELETE]}}]))
+        self.assertIsNone(g.from_server({"jsonrpc": "2.0", "method": "x", "id": fwd["id"], "result": {"tools": [DELETE]}}))
+        out = g.from_server({"jsonrpc": "2.0", "id": fwd["id"], "result": {"tools": [DELETE]}})
+        self.assertEqual(out["result"]["tools"], [])
+        self.assertIsNone(g.from_server({"jsonrpc": "2.0", "id": fwd["id"], "result": {"tools": [DELETE]}}), "answered once only")
+        # server requests and notifications still pass
+        self.assertIsNotNone(g.from_server({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}))
 
 
 class GuardEndToEnd(unittest.TestCase):

@@ -9,52 +9,65 @@ calls to a removed tool get an error without reaching the server. Blocked tools 
 client's server log). Without a live lock entry for --name it refuses to start: fail closed.
 """
 import argparse, json, os, subprocess, sys, threading
-from mcpwatch.watch import tool_hash
+from mcpwatch.live import full_hash
 
 # shortcut: stdio only; remote (HTTP) servers can be wrapped with a stdio bridge such as mcp-remote until a native HTTP mode exists
 
 
 class Guard:
+    """Every client request gets a guard-issued id (mapped back on the way out), so a server can only answer requests
+    the guard saw, and a tools/list answer can't dodge the filter with an id that merely looks different (1 vs 1.0)."""
+
     def __init__(self, approved, allow_new=False, log=None):
-        self.approved, self.allow_new = approved, allow_new  # approved: {tool: hash}
-        self.list_ids, self.blocked, self.lock = set(), set(), threading.Lock()
+        self.approved, self.allow_new = approved, allow_new  # approved: {tool: full_hash}
+        self.pending, self.seq, self.blocked, self.lock = {}, 0, set(), threading.Lock()
         self.log = log or (lambda m: print(f"mcpwatch guard: {m}", file=sys.stderr, flush=True))
 
     def allowed(self, tool):
         name = tool.get("name")
         if name in self.approved:
-            return self.approved[name] == tool_hash(tool)
+            return self.approved[name] == full_hash(tool)
         return self.allow_new
 
     def from_client(self, msg):
         """(forward_to_server, reply_to_client) for one client message."""
         if not isinstance(msg, dict):
-            return msg, None
-        key = json.dumps(msg.get("id"))
-        if msg.get("method") == "tools/list" and "id" in msg:
-            with self.lock:
-                self.list_ids.add(key)
-        if msg.get("method") == "tools/call" and "id" in msg:
+            return None, None  # batches are not part of current MCP: never forwarded
+        if "method" not in msg:
+            return msg, None  # the client's answer to a server request (sampling, roots, ...): ids are the server's
+        if "id" not in msg:
+            return msg, None  # notification
+        if msg["method"] == "tools/call":
             name = (msg.get("params") or {}).get("name")
             if name in self.blocked or (name not in self.approved and not self.allow_new):
                 return None, {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32602,
                               "message": f"mcpwatch guard blocked '{name}': this tool is not the version you approved. Review it, then run `mcpwatch lock --live`."}}
-        return msg, None
+        with self.lock:
+            self.seq += 1
+            gid = f"mcpwatch-guard-{self.seq}"
+            self.pending[gid] = (msg["id"], msg["method"])
+        return {**msg, "id": gid}, None
 
     def from_server(self, msg):
-        """The server message with unapproved tools removed from tools/list answers."""
-        if not isinstance(msg, dict) or "method" in msg:
-            return msg
-        key = json.dumps(msg.get("id"))
+        """The message to pass to the client, or None to drop it."""
+        if not isinstance(msg, dict):
+            return None
+        if "method" in msg:
+            return None if ("result" in msg or "error" in msg) else msg  # a server request or notification, never both
         with self.lock:
-            if key not in self.list_ids:
-                return msg
-            self.list_ids.discard(key)
+            entry = self.pending.pop(msg.get("id"), None) if isinstance(msg.get("id"), str) else None
+        if entry is None:
+            return None  # an answer to nothing the guard sent
+        orig_id, method = entry
+        msg = {**msg, "id": orig_id}
         result = msg.get("result")
-        if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+        if method != "tools/list" or not isinstance(result, dict):
             return msg
+        tools = result.get("tools")
+        if not isinstance(tools, list):
+            return {**msg, "result": {**result, "tools": []}}
         keep = []
-        for t in result["tools"]:
+        for t in tools:
             if isinstance(t, dict) and self.allowed(t):
                 keep.append(t)
             else:
@@ -101,7 +114,9 @@ def relay(guard, child, client_in, client_out):
             msg = json.loads(line)
         except ValueError:
             continue  # servers that log to stdout would corrupt the stream anyway
-        write(client_out, guard.from_server(msg))
+        out = guard.from_server(msg)
+        if out is not None:
+            write(client_out, out)
     return child.wait()
 
 
@@ -118,7 +133,7 @@ def main(argv=None):
     try:
         with open(a.lock, encoding="utf-8") as fh:
             live = json.load(fh)["servers"][a.name]["live"]
-        approved = {n: t["h"] for n, t in live.items()}
+        approved = {n: t["f"] for n, t in live.items()}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         print(f"mcpwatch guard: no approved tools for '{a.name}' in {a.lock}: run `mcpwatch lock --live` first", file=sys.stderr)
         return 2
