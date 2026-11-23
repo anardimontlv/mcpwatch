@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 10
     strategy: { fail-fast: false, matrix: { python: ["3.10", "3.13"] } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "${{ matrix.python }}" }
       - uses: actions/setup-node@v7  # for the browser-scanner parity test
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: scan passes below the threshold (fixture has one medium finding)
         uses: anardimontlv/mcpwatch-action@v1
         with: { config: tests/fixtures/action-e2e.mcp.json, fail-on: high }
