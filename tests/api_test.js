@@ -122,14 +122,18 @@ function fakeSql(q, p) {
   }
   if (q.startsWith("SELECT repo, reported_at, servers, violations FROM repo_reports")) return (db.repos || []).filter((r) => r.user_id === p[0]);
   if (q.startsWith("DELETE FROM repo_reports")) { db.repos = (db.repos || []).filter((r) => !(r.user_id === p[0] && r.repo === p[1])); return []; }
-  if (q.startsWith("SELECT repo_id, owner_id FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
+  if (q.startsWith("INSERT INTO claim_pins (slug, repo_id, owner_id) VALUES")) {
+    db.pins = db.pins || {};
+    if (!db.pins[p[0]]) db.pins[p[0]] = { repo_id: p[1], owner_id: p[2] };
+    return [];
+  }
+  if (q.startsWith("INSERT INTO claim_pins")) return [];
+  if (q.startsWith("SELECT repo_id, owner_id FROM claim_pins")) return db.pins && db.pins[p[0]] ? [db.pins[p[0]]] : [];
   if (q.startsWith("SELECT repo, responses, verified_at FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
   if (q.startsWith("DELETE FROM maintainer_claims")) { db.claims = (db.claims || []).filter((c) => c.slug !== p[0]); return []; }
   if (q.startsWith("INSERT INTO maintainer_claims")) {
-    const old = (db.claims || []).find((c) => c.slug === p[0]);
     db.claims = (db.claims || []).filter((c) => c.slug !== p[0]);
-    db.claims.push({ slug: p[0], repo: p[1], responses: p[2], verified_at: "2026-11-23 10:00:00+00",
-      repo_id: (old && old.repo_id) || p[3], owner_id: (old && old.owner_id) || p[4] });
+    db.claims.push({ slug: p[0], repo: p[1], responses: p[2], verified_at: "2026-11-23 10:00:00+00" });
     return [];
   }
   if (q === "SELECT email FROM users WHERE id = $1") return db.users.filter((x) => x.id === p[0]).map((x) => ({ email: x.email }));
@@ -631,6 +635,17 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   ghInfo = { id: "999", owner_id: "888", owner: "acme" };
   assert.equal((await post({ slug: id })).status, 409);
   assert.equal((await get(claim, "/api/claim?slug=" + id)).json.claimed, false);
+  // revoke (file removed), then the impostor re-adds it: the pin survived, still refused
+  file = null;
+  assert.equal((await post({ slug: id })).status, 404);
+  file = `claim: ${id}`;
+  assert.equal((await post({ slug: id })).status, 409, "pins outlive revocation");
+  // no claim line -> GitHub API never called
+  let ghCalls = 0;
+  L.deps.githubRepoInfo = async () => { ghCalls++; return ghInfo; };
+  file = "nothing here";
+  await post({ slug: id });
+  assert.equal(ghCalls, 0);
   // io.github.<owner>/ names must be claimed from that owner's repos
   L.deps.fetchJSON = async () => ({ [id]: { n: "io.github.acme/srv", r: "https://github.com/mallory/srv", f: [] } });
   assert.equal((await post({ slug: id })).status, 400);

@@ -156,7 +156,11 @@ function ensureSchema() {
       `CREATE TABLE IF NOT EXISTS maintainer_claims (slug text PRIMARY KEY, repo text NOT NULL, responses jsonb NOT NULL,
         verified_at timestamptz NOT NULL DEFAULT now())`,
       // the repo's numeric GitHub ids, pinned at the first claim: a re-registered (repojacked) name has new ids
-      `ALTER TABLE maintainer_claims ADD COLUMN IF NOT EXISTS repo_id text, ADD COLUMN IF NOT EXISTS owner_id text`,
+      `ALTER TABLE maintainer_claims ADD COLUMN IF NOT EXISTS repo_id text, ADD COLUMN IF NOT EXISTS owner_id text`, // superseded by claim_pins
+      // first-claim GitHub ids per server; never deleted by revoking, so a repojacked name can't start over
+      `CREATE TABLE IF NOT EXISTS claim_pins (slug text PRIMARY KEY, repo_id text NOT NULL, owner_id text NOT NULL, pinned_at timestamptz NOT NULL DEFAULT now())`,
+      `INSERT INTO claim_pins (slug, repo_id, owner_id) SELECT slug, repo_id, owner_id FROM maintainer_claims
+        WHERE repo_id IS NOT NULL AND owner_id IS NOT NULL ON CONFLICT DO NOTHING`,
       `CREATE TABLE IF NOT EXISTS repo_reports (user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE, repo text NOT NULL,
         reported_at timestamptz NOT NULL DEFAULT now(), servers jsonb NOT NULL, violations jsonb NOT NULL, PRIMARY KEY (user_id, repo))`,
     ]) await sql(q);
