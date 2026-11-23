@@ -3,10 +3,12 @@
 
   python3 -m mcpwatch.watch lock  CONFIG.json [--lock mcpwatch.lock]   # pin today's tools
   python3 -m mcpwatch.watch check CONFIG.json [--lock mcpwatch.lock]   # exit 1 if anything drifted
+  MCPWATCH_REPORT_KEY=... python3 -m mcpwatch.watch report CONFIG.json [--repo owner/name]   # Team org view + policy
 
 Fingerprints come from the public daily index (one hash per tool over its description and input
 schema), so nothing is executed and nothing about your config is uploaded: the CLI only downloads
-public index shards. Exit codes: 0 no drift, 1 drift, 2 bad input.
+public index shards. `report` (Team) sends only the public server ids and the scanner's rule codes for this
+repo, and exits 1 on team policy violations. Exit codes: 0 no drift, 1 drift, 2 bad input.
 """
 import argparse, hashlib, json, os, re, shlex, sys, urllib.error, urllib.request
 from urllib.parse import urlsplit
@@ -213,13 +215,42 @@ def drift_items(locked, now, max_stale):
     return items
 
 
+def report_payload(servers, now):
+    """What `report` sends: per server, its public index id (or None) and the scanner's rule codes. Nothing else."""
+    from mcpwatch.scan import scan_server
+    out = []
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            continue
+        rules = sorted({f["rule"] for f in scan_server(name, cfg)})
+        out.append({"slug": (now.get(name) or {}).get("slug"), "rules": rules})
+    return out
+
+
+def send_report(repo, payload, key):
+    if not BASE.startswith("https://"):
+        raise ValueError("refusing to send the report key to a non-https MCPWATCH_URL")
+    req = urllib.request.Request(f"{BASE}/api/report", method="POST", data=json.dumps({"key": key, "repo": repo, "servers": payload}).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": "mcpwatch-cli/0.1"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.load(e).get("error", "")
+        except Exception:
+            msg = ""
+        raise RuntimeError(f"HTTP {e.code}{': ' + msg if msg else ''}") from None
+
+
 def main(argv=None):
     from mcpwatch.scan import servers_of
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["lock", "check"])
+    ap.add_argument("cmd", choices=["lock", "check", "report"])
     ap.add_argument("config")
     ap.add_argument("--lock", default="mcpwatch.lock")
     ap.add_argument("--max-stale", type=int, default=3, help="check: fail if pinned tools were last verified more than N days ago")
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""), help="report: owner/name (default: $GITHUB_REPOSITORY)")
     a = ap.parse_args(argv)
     try:
         with open(a.config, encoding="utf-8") as fh:
@@ -236,6 +267,21 @@ def main(argv=None):
         print(f"mcpwatch: cannot reach the index at {BASE}: {e}", file=sys.stderr)
         return 2
     unindexed = [n for n, r in now.items() if not r["slug"]]
+    if a.cmd == "report":
+        key = os.environ.get("MCPWATCH_REPORT_KEY", "").strip()  # env only: never a CLI argument (process lists, logs)
+        if not key or not a.repo:
+            print("mcpwatch: report needs MCPWATCH_REPORT_KEY and --repo owner/name", file=sys.stderr)
+            return 2
+        try:
+            res = send_report(a.repo, report_payload(servers, now), key)
+        except Exception as e:
+            print(f"mcpwatch: report failed: {e}", file=sys.stderr)
+            return 2
+        for v in res.get("violations", []):
+            print(f"  [POLICY] {v.get('server')}: {v.get('rule')}: {v.get('message')}")
+        n = len(res.get("violations", []))
+        print(f"mcpwatch: reported {res.get('servers', 0)} server(s) for {a.repo}; {n} policy violation(s). Org view: {res.get('dashboard', BASE + '/watch')}")
+        return 1 if n else 0
     if a.cmd == "lock":
         with open(a.lock, "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "servers": now}, fh, indent=2, sort_keys=True)

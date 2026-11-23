@@ -1,4 +1,5 @@
-// POST /api/manage {token, action: list|add|remove|slack|invite|remove_member|leave_team|delete_account, slugs?, url?, email?}, or {action: "email_link", email}.
+// POST /api/manage {token, action: list|add|remove|slack|invite|remove_member|leave_team|policy|report_key|remove_repo|delete_account,
+//   slugs?, url?, email?, policy?, repo?}, or {action: "email_link", email}.
 const L = require("./_lib");
 
 const LINK_SENT = { ok: true, message: "If that address has a confirmed watchlist, a new manage link is on its way." };
@@ -23,7 +24,7 @@ module.exports = L.handler(async (req, res) => {
     }
     return L.send(res, 200, LINK_SENT);
   }
-  if (!["list", "add", "remove", "slack", "invite", "remove_member", "leave_team", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
+  if (!["list", "add", "remove", "slack", "invite", "remove_member", "leave_team", "policy", "report_key", "remove_repo", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
   if (typeof body.token !== "string" || !L.TOKEN.test(body.token)) throw new L.HttpError(403, "invalid or expired manage link");
   await L.ensureSchema();
   if (action === "delete_account") {
@@ -83,14 +84,30 @@ module.exports = L.handler(async (req, res) => {
       invited_by = CASE WHEN invited_by = $1 THEN NULL ELSE invited_by END,
       invite_hash = CASE WHEN invited_by = $1 THEN NULL ELSE invite_hash END WHERE email = $2`, [user.id, email]);
   }
+  // Org view (owner side): policy rules, the CI report key (shown once; a new one revokes the old), stale repos
+  let policy = typeof user.policy === "string" ? JSON.parse(user.policy) : user.policy || {}, reportKey;
+  if (["policy", "report_key", "remove_repo"].includes(action) && !teamOk) throw new L.HttpError(402, "the org view is part of the Team plan");
+  if (action === "policy") {
+    policy = L.cleanPolicy(body.policy);
+    await L.sql(`UPDATE users SET policy = $2::jsonb WHERE id = $1`, [user.id, policy]);
+  }
+  if (action === "report_key") {
+    await L.sql(`DELETE FROM tokens WHERE user_id = $1 AND kind = 'report'`, [user.id]);
+    reportKey = await L.issueToken(user.id, "report");
+  }
+  if (action === "remove_repo" && typeof body.repo === "string") await L.sql(`DELETE FROM repo_reports WHERE user_id = $1 AND repo = $2`, [user.id, body.repo]);
   if (action === "leave_team") await L.sql(`UPDATE users SET team_owner = NULL WHERE id = $1`, [user.id]);
   const team = action === "leave_team" ? null : user.team_owner;
   const members = teamOk ? await L.sql(`SELECT email, team_owner IS NOT NULL AND team_owner = $1 AS joined FROM users
     WHERE team_owner = $1 OR invited_by = $1 ORDER BY email`, [user.id]) : [];
+  const repos = teamOk ? await L.sql(`SELECT repo, reported_at, servers, violations FROM repo_reports WHERE user_id = $1 ORDER BY repo`, [user.id]) : [];
+  const parse = (v) => (typeof v === "string" ? JSON.parse(v) : v || []);
   const [owner] = team ? await L.sql(`SELECT email FROM users WHERE id = $1`, [team]) : [];
   const rows = await L.sql(`SELECT slug, added_at FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
   L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), since: Object.fromEntries(rows.map((r) => [r.slug, r.added_at])),
     max: limit, limit, plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed, team_allowed: L.teamAllowed(user.plan),
     seats: teamOk ? L.TEAM_SEATS() : 0, members: members.map((m) => ({ email: m.email, joined: m.joined === true || m.joined === "t" || m.joined === "true" })),
-    team_of: owner ? owner.email : null });
+    team_of: owner ? owner.email : null, policy: teamOk ? policy : null,
+    repos: repos.map((r) => ({ repo: r.repo, reported_at: r.reported_at, servers: parse(r.servers), violations: parse(r.violations) })),
+    ...(reportKey ? { report_key: reportKey } : {}) });
 });

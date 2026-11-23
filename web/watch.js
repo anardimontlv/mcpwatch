@@ -90,6 +90,7 @@
     renderSlack(d);
     $("w-export").hidden = !d.team_allowed;
     renderTeam(d);
+    renderOrg(d);
     last = d;
     return true;
   }
@@ -118,6 +119,43 @@
     if (await manage("invite", undefined, { email: e })) { $("w-inv-email").value = ""; msg("Invitation sent: it is valid for 7 days."); }
   });
   $("w-leave").addEventListener("click", () => { if (confirm("Leave this team? You will stop getting its alerts.")) manage("leave_team"); });
+
+  // ---- org view: policy, repos reported from CI, report key (shown once) ----
+  function renderOrg(d) {
+    $("w-org").hidden = !d.policy;
+    if (!d.policy) return;
+    document.querySelectorAll("[data-pol]").forEach((c) => { c.checked = d.policy[c.dataset.pol] === true; });
+    $("w-pol-grade").value = d.policy.min_grade || "";
+    const ul = $("w-repos");
+    ul.replaceChildren();
+    if (!(d.repos || []).length) ul.append(el("li", "No reports yet: connect CI below.", "mut"));
+    for (const r of d.repos || []) {
+      const li = el("li"), b = el("button", "Remove", "btn"), v = r.violations || [];
+      b.type = "button";
+      b.addEventListener("click", () => manage("remove_repo", undefined, { repo: r.repo }));
+      li.append(el("strong", r.repo, "wrap"), " ", el("span", (r.servers || []).length + " server(s), " +
+        (v.length ? v.length + " violation(s)" : "passes policy") + ", reported " + String(r.reported_at).slice(0, 16), "mut sm"), " ", b);
+      if (v.length) {
+        const vl = el("ul", null, "sm");
+        for (const x of v.slice(0, 20)) vl.append(el("li", x.server + ": " + x.message, "wrap"));
+        li.append(vl);
+      }
+      ul.append(li);
+    }
+  }
+  $("w-pol-save").addEventListener("click", async () => {
+    const policy = { min_grade: $("w-pol-grade").value };
+    document.querySelectorAll("[data-pol]").forEach((c) => { if (c.checked) policy[c.dataset.pol] = true; });
+    if (await manage("policy", undefined, { policy })) msg("Policy saved: it applies to each repo's next report.");
+  });
+  $("w-key").addEventListener("click", async () => {
+    if (!confirm("Create a new report key? Any previous key stops working.")) return;
+    const { ok, d } = await post("/api/manage", { token, action: "report_key" });
+    if (!ok || !d.report_key) { msg("Could not create a key: " + (d.error || "unknown error") + "."); return; }
+    const out = $("w-key-out");
+    out.replaceChildren(el("span", "Your report key (shown once, copy it now): "), el("code", d.report_key));
+    out.hidden = false;
+  });
 
   // ---- audit export (Team): built in the browser from the public index + this account's watch dates ----
   let last = null;

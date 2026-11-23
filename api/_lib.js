@@ -120,7 +120,9 @@ function ensureSchema() {
         ADD COLUMN IF NOT EXISTS invited_by bigint REFERENCES users(id) ON DELETE SET NULL,
         ADD COLUMN IF NOT EXISTS invite_hash text, ADD COLUMN IF NOT EXISTS invite_expires timestamptz`, // own slot: never clobbers a sign-up link
       // Team org view: per-repo results sent by `mcpwatch report` with a report key, checked against users.policy
-      `ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_kind_check, ADD CONSTRAINT tokens_kind_check CHECK (kind IN ('manage', 'unsub', 'report'))`,
+      // widen the token kinds once (skips the table lock when already done)
+      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tokens_kind_check' AND pg_get_constraintdef(oid) LIKE '%report%') THEN
+        ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_kind_check, ADD CONSTRAINT tokens_kind_check CHECK (kind IN ('manage', 'unsub', 'report')); END IF; END $$`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS policy jsonb`,
       `CREATE TABLE IF NOT EXISTS repo_reports (user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE, repo text NOT NULL,
         reported_at timestamptz NOT NULL DEFAULT now(), servers jsonb NOT NULL, violations jsonb NOT NULL, PRIMARY KEY (user_id, repo))`,

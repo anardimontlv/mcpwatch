@@ -7,6 +7,7 @@ const L = require(path.join(__dirname, "..", "api", "_lib"));
 const subscribe = require(path.join(__dirname, "..", "api", "subscribe"));
 const confirm = require(path.join(__dirname, "..", "api", "confirm"));
 const manage = require(path.join(__dirname, "..", "api", "manage"));
+const report = require(path.join(__dirname, "..", "api", "report"));
 const unsubscribe = require(path.join(__dirname, "..", "api", "unsubscribe"));
 const checkout = require(path.join(__dirname, "..", "api", "billing", "checkout"));
 const portal = require(path.join(__dirname, "..", "api", "billing", "portal"));
@@ -31,7 +32,7 @@ function fakeSql(q, p) {
     db.tokens = db.tokens.filter((t) => t.user_id !== u.id);
   };
   const live = (h, kind) => db.tokens.find((t) => t.hash === h && t.kind === kind && t.expires_at > now);
-  if (/^\s*(CREATE|ALTER)/.test(q)) return [];
+  if (/^\s*(CREATE|ALTER|DO )/.test(q)) return [];
   if (q.startsWith("DELETE FROM webhook_events WHERE received_at")) return [];
   if (q.startsWith("INSERT INTO webhook_events")) {
     if (db.events.has(p[0])) return [];
@@ -109,6 +110,16 @@ function fakeSql(q, p) {
     return db.users.filter((x) => x.team_owner === p[0] || x.invited_by === p[0]).sort((a, b) => a.email.localeCompare(b.email))
       .map((x) => ({ email: x.email, joined: x.team_owner === p[0] ? "t" : "f" }));
   }
+  if (q.startsWith("UPDATE users SET policy = $2::jsonb")) { user((x) => x.id === p[0]).policy = p[1]; return []; }
+  if (q.startsWith("DELETE FROM tokens WHERE user_id = $1 AND kind = 'report'")) { db.tokens = db.tokens.filter((t) => !(t.user_id === p[0] && t.kind === "report")); return []; }
+  if (q.startsWith("SELECT count(*) AS n FROM repo_reports")) return [{ n: String((db.repos || []).filter((r) => r.user_id === p[0] && r.repo !== p[1]).length) }];
+  if (q.startsWith("INSERT INTO repo_reports")) {
+    db.repos = (db.repos || []).filter((r) => !(r.user_id === p[0] && r.repo === p[1]));
+    db.repos.push({ user_id: p[0], repo: p[1], reported_at: "2026-11-23 10:00:00+00", servers: p[2], violations: p[3] });
+    return [];
+  }
+  if (q.startsWith("SELECT repo, reported_at, servers, violations FROM repo_reports")) return (db.repos || []).filter((r) => r.user_id === p[0]);
+  if (q.startsWith("DELETE FROM repo_reports")) { db.repos = (db.repos || []).filter((r) => !(r.user_id === p[0] && r.repo === p[1])); return []; }
   if (q === "SELECT email FROM users WHERE id = $1") return db.users.filter((x) => x.id === p[0]).map((x) => ({ email: x.email }));
   if (q.includes("INSERT INTO tokens")) {
     const [uid, kind, h, ttl] = p;
@@ -119,7 +130,7 @@ function fakeSql(q, p) {
     const t = live(p[0], p[1]);
     const u = t && user((x) => x.id === t.user_id);
     return u ? [{ id: u.id, email: u.email, plan: effPlan(u), paddle_customer_id: u.paddle_customer_id || null,
-      paddle_subscription_id: u.paddle_subscription_id || null, slack_webhook: u.slack_webhook || null, team_owner: u.team_owner || null }] : [];
+      paddle_subscription_id: u.paddle_subscription_id || null, slack_webhook: u.slack_webhook || null, team_owner: u.team_owner || null, policy: u.policy || null }] : [];
   }
   if (q.startsWith("UPDATE users SET slack_webhook = $2")) { user((x) => x.id === p[0]).slack_webhook = p[1]; return []; }
   if (q === "SELECT slug FROM watches WHERE user_id = $1") return db.watches.filter((w) => w.user_id === p[0]).map((w) => ({ slug: w.slug }));
@@ -495,6 +506,41 @@ test("team seats: invite, accept through the emailed link, list, remove; member 
   delete process.env.TEAM_SEATS;
   billingOn();
   assert.equal((await op({ action: "invite", email: "a3@example.com" })).status, 402, "Team plan only once billing is on");
+});
+
+test("org view: report key, policy, report from CI with violations, repo list; key rotation; private data never accepted", async () => {
+  const owner = await signUp("org@example.com", [KNOWN[0]]);
+  const op = (body) => call(manage, { body: { token: owner, ...body } });
+  assert.equal((await op({ action: "policy", policy: { min_grade: "Z" } })).status, 400);
+  const pol = await op({ action: "policy", policy: { no_plain_http: true, require_pinned: true, indexed_only: true, min_grade: "B", evil: true } });
+  assert.deepEqual(pol.json.policy, { no_plain_http: true, require_pinned: true, indexed_only: true, min_grade: "B" });
+  const k1 = (await op({ action: "report_key" })).json.report_key;
+  assert.match(k1, /^[A-Za-z0-9_-]{43}$/);
+  assert.ok(!JSON.stringify(db).includes(k1), "report key stored only as a hash");
+  assert.equal((await op({ action: "list" })).json.report_key, undefined, "shown once");
+  L.deps.fetchJSON = async () => ({ [KNOWN[0]]: { g: "D", a: "open" } });
+  const send = (body) => call(report, { body: { key: k1, repo: "acme/app", ...body } });
+  const r = await send({ servers: [{ slug: KNOWN[0], rules: [] }, { slug: null, rules: ["MW004", "MW002"] }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.violations.map((v) => v.server + ":" + v.rule).sort(),
+    [KNOWN[0] + ":min_grade", "private server 1:indexed_only", "private server 1:no_plain_http", "private server 1:require_pinned"]);
+  assert.equal((await send({ servers: [{ slug: null, name: "x", url: "http://10.0.0.1", rules: ["evil"] }] })).status, 400);
+  assert.equal((await call(report, { body: { key: k1, repo: "../etc", servers: [] } })).status, 400);
+  const l = await op({ action: "list" });
+  assert.equal(l.json.repos.length, 1);
+  assert.equal(l.json.repos[0].repo, "acme/app");
+  assert.equal(l.json.repos[0].violations.length, 4);
+  const k2 = (await op({ action: "report_key" })).json.report_key;
+  assert.equal((await send({ servers: [] })).status, 403, "old key revoked");
+  assert.equal((await call(report, { body: { key: k2, repo: "acme/app", servers: [] } })).status, 200);
+  await op({ action: "remove_repo", repo: "acme/app" });
+  assert.equal((await op({ action: "list" })).json.repos.length, 0);
+  fetchFails = true;
+  L.deps.fetchJSON = async () => { throw new Error("down"); };
+  assert.equal((await call(report, { body: { key: k2, repo: "acme/app", servers: [{ slug: KNOWN[0], rules: [] }] } })).status, 503, "fails closed");
+  billingOn();
+  assert.equal((await call(report, { body: { key: k2, repo: "acme/app", servers: [] } })).status, 402);
+  assert.equal((await op({ action: "policy", policy: {} })).status, 402);
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------

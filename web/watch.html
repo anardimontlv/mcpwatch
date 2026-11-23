@@ -9,6 +9,24 @@
 <div id="w-inv"><p><label for="w-inv-email" class="vh">Teammate email</label><input id="w-inv-email" type="email" autocomplete="off" spellcheck="false" style="width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit" placeholder="teammate@example.com"></p>
 <p class="cta"><button type="button" class="btn" id="w-inv-go">Invite to team</button></p></div>
 <p class="cta" id="w-leave-p" hidden><button type="button" class="btn" id="w-leave">Leave team</button></p></section>
+<section class="card" id="w-org" hidden><h2>Org view and policy</h2>
+<p class="mut sm">Every repo that runs <code>mcpwatch report</code> in CI shows up here, checked against your policy. A repo with a violation fails its CI step. Only public server ids and rule codes are sent: never config contents, names, URLs or secrets.</p>
+<fieldset style="border:0;padding:0;margin:0"><legend class="sm" style="font-weight:600">Policy</legend>
+<p class="sm"><label><input type="checkbox" data-pol="no_plain_http"> No plain HTTP servers</label><br>
+<label><input type="checkbox" data-pol="require_pinned"> Package versions must be pinned</label><br>
+<label><input type="checkbox" data-pol="no_secrets"> No plaintext secrets in configs</label><br>
+<label><input type="checkbox" data-pol="require_auth"> Remote servers must require credentials</label><br>
+<label><input type="checkbox" data-pol="indexed_only"> Only servers listed in the public MCP registry</label><br>
+<label>Minimum grade <select id="w-pol-grade"><option value="">any</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></p>
+<p class="cta"><button type="button" class="btn" id="w-pol-save">Save policy</button></p></fieldset>
+<h3 class="sm" style="font-weight:600">Repos</h3><ul id="w-repos" class="feed"></ul>
+<h3 class="sm" style="font-weight:600">Connect CI</h3>
+<p class="mut sm">Create a report key, save it as the <code>MCPWATCH_REPORT_KEY</code> secret in each repo (or your GitHub organization), and add this step after checkout:</p>
+<pre class="sm" style="overflow-x:auto;white-space:pre">- run: pipx run --spec mcpwatch-io==0.3.0 mcpwatch report .mcp.json
+  env:
+    MCPWATCH_REPORT_KEY: ${{ secrets.MCPWATCH_REPORT_KEY }}
+    GITHUB_REPOSITORY: ${{ github.repository }}</pre>
+<p class="cta"><button type="button" class="btn" id="w-key">Create report key</button></p><p id="w-key-out" class="sm wrap" hidden></p></section>
 <section class="card" id="w-export" hidden><h2>Audit export</h2><p class="mut sm">Evidence for security reviews: every server you watch, since when, its current grade, findings, auth and recent changes. Built in your browser from the public index.</p>
 <p class="cta"><button type="button" class="btn" id="w-exp-csv">Download CSV</button> <button type="button" class="btn" id="w-exp-json">Download JSON</button></p></section>
 <section class="card" id="w-slack"><h2>Slack alerts</h2><p id="w-slack-st" class="mut sm">Also post the daily digest to a Slack channel. In Slack, create an <a href="https://api.slack.com/messaging/webhooks">incoming webhook</a> and paste its URL.</p>

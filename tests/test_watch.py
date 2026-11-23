@@ -202,3 +202,39 @@ class OrderIndependenceTest(unittest.TestCase):
             raise urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
         with mock.patch.object(index, "public_host", lambda u: True), mock.patch.object(index, "rpc", boom):
             self.assertEqual(index.probe("https://x.example.com/mcp")[0], "down")
+
+
+class Report(unittest.TestCase):
+    CFG = {"mcpServers": {"secret-internal-name": {"url": "http://10.1.2.3/mcp", "headers": {"Authorization": "Bearer sk-live-abcdef1234567890"}},
+                          "pub": {"command": "npx", "args": ["-y", "some-pkg"], "env": {"TOKEN": "hunter2hunter2hunter2"}}}}
+
+    def test_payload_has_only_ids_and_rule_codes(self):
+        from mcpwatch.watch import report_payload
+        from mcpwatch.scan import servers_of
+        servers = servers_of(self.CFG)
+        p = report_payload(servers, {"pub": {"slug": "some-pkg-0a1b2c3d"}, "secret-internal-name": {"slug": None}})
+        self.assertEqual({tuple(sorted(x)) for x in p}, {("rules", "slug")})
+        blob = json.dumps(p)
+        for leak in ("secret-internal-name", "10.1.2.3", "sk-live", "hunter2", "npx", "some-pkg\"", "TOKEN"):
+            self.assertNotIn(leak, blob)
+        self.assertIn("MW004", blob)
+
+    def test_report_exit_codes_and_key_from_env_only(self):
+        from unittest import mock
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from mcpwatch import watch
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "mcp.json")
+            with open(cfg, "w") as fh:
+                json.dump(self.CFG, fh)
+            with mock.patch.object(watch, "snapshot", lambda s: {n: {"slug": None} for n in s}), \
+                 mock.patch.dict(os.environ, {"MCPWATCH_REPORT_KEY": ""}), redirect_stderr(io.StringIO()):
+                self.assertEqual(watch.main(["report", cfg, "--repo", "a/b"]), 2)
+            sent = []
+            fake = lambda repo, payload, key: sent.append((repo, key)) or {"servers": 2, "violations": [{"server": "private server 1", "rule": "no_plain_http", "message": "x"}]}
+            with mock.patch.object(watch, "snapshot", lambda s: {n: {"slug": None} for n in s}), mock.patch.object(watch, "send_report", fake), \
+                 mock.patch.dict(os.environ, {"MCPWATCH_REPORT_KEY": "k" * 43}), redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(watch.main(["report", cfg, "--repo", "a/b"]), 1)
+            self.assertEqual(sent, [("a/b", "k" * 43)])
+            self.assertIn("[POLICY] private server 1: no_plain_http", out.getvalue())

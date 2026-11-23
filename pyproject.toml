@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcpwatch-io"
-version = "0.2.2"
+version = "0.3.0"
 description = "Know when the tools your AI agents trust change: MCP config scanner and tool drift checks."
 readme = "README.md"
 license = { text = "Apache-2.0" }
