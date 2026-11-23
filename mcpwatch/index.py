@@ -283,7 +283,7 @@ h2{font-size:1.375rem;margin-top:2.4em}h3{font-size:1rem;margin:0 0 .25em}p{marg
 .card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin:16px 0}.card h2{font-size:1.0625rem;margin-top:0}
 .hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}
 .eye{display:inline-block;font:500 .8125rem/1 var(--mono);color:var(--acc);background:var(--soft);padding:6px 10px;border-radius:99px;margin-bottom:16px}
-[hidden]{display:none!important}
+[hidden]{display:none!important}#lookup{scroll-margin-top:24px}a.stat{color:inherit;text-decoration:none;transition:border-color .15s}a.stat:hover{border-color:var(--acc)}a.stat:hover span{color:var(--acc)}a.gl{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:2px 4px}a.gl:hover{background:var(--sf)}
 .cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 20px}
 .btn{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-weight:600;text-decoration:none;transition:border-color .15s,box-shadow .15s}
 .btn:hover{border-color:var(--mut)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on)}
@@ -534,16 +534,24 @@ if(!days.length){box.append($('p','No history yet: the radar records its first b
 days.forEach(d=>{try{box.append(day(d))}catch(e){box.append($('p','Could not render the changes for '+String(d&&d.date),'mut'))}})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
-SEARCH_JS = """
+SEARCH_JS = r"""
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
-const q=document.getElementById('q'),out=document.getElementById('res'),T=document.getElementById('rt'),rc=document.getElementById('rc');let L=null;
-q.addEventListener('input',async()=>{const v=q.value.trim().toLowerCase();if(v.length<2){out.replaceChildren();T.hidden=true;rc.textContent='';return}
+const q=document.getElementById('q'),out=document.getElementById('res'),T=document.getElementById('rt'),rc=document.getElementById('rc'),gb=document.getElementById('gf');let L=null;
+let G=new URLSearchParams(location.search).get('grade');if(!/^[A-F]$/.test(G||''))G=null;
+const syncChips=()=>gb.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.g||null)===G)));
+async function run(){const v=q.value.trim().toLowerCase();if(v.length<2&&!G){out.replaceChildren();T.hidden=true;rc.textContent='';return}
 if(!L){try{L=await (await fetch('/list.json')).json()}catch(e){rc.textContent='Could not load the index.';return}}
-const all=L.filter(x=>x[0].includes(v)||x[1].toLowerCase().includes(v)),hits=all.slice(0,50);
-rc.textContent=!all.length?'No servers match.':all.length>50?'Showing 50 of '+all.length.toLocaleString()+' matches.':all.length+(all.length===1?' match.':' matches.');
+let all=L.filter(x=>(!G||x[2]===G)&&(v.length<2||x[0].includes(v)||x[1].toLowerCase().includes(v)));
+if(G&&v.length<2)all=all.slice().sort((x,y)=>y[3]-x[3]);
+const hits=all.slice(0,50),what=G?' with grade '+G:'';
+rc.textContent=!all.length?'No servers'+what+' match.':all.length>50?'Showing 50 of '+all.length.toLocaleString()+' servers'+what+'.':all.length+(all.length===1?' server':' servers')+what+'.';
 T.hidden=!hits.length;
 out.replaceChildren(...hits.map(x=>{const tr=$('tr'),a=$('a',x[1]);a.href='/s/'+x[0];
-const td=$('td',null,'wrap');td.append(a);const g=$('td'),c=$('span',null,'g g'+x[2]);c.append($('span','Grade ','vh'),x[2]);g.append(c);tr.append(g,td,$('td',String(x[3]),'n'));return tr}))});
+const td=$('td',null,'wrap');td.append(a);const g=$('td'),c=$('span',null,'g g'+x[2]);c.append($('span','Grade ','vh'),x[2]);g.append(c);tr.append(g,td,$('td',String(x[3]),'n'));return tr}))}
+q.addEventListener('input',run);
+gb.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{G=b.dataset.g||null;syncChips();
+history.replaceState(null,'',(G?'?grade='+G:location.pathname)+'#lookup');run()}));
+syncChips();if(G)run();
 """
 
 
@@ -587,7 +595,7 @@ def write_site(results, out, changes=None):
         fh.write(page("Page not found: mcpwatch",
                       "<div class='hero'><h1>Page not found</h1><p class='lede'>That address doesn't exist on mcpwatch. "
                       "Looking for a server? Search the index from the home page.</p>"
-                      "<div class='cta'><a class='btn pri' href='/'>Search the index</a><a class='btn' href='/scan'>Scan your config</a></div></div>",
+                      "<div class='cta'><a class='btn pri' href='/#lookup'>Search the index</a><a class='btn' href='/scan'>Scan your config</a></div></div>",
                       "Page not found.", noindex=True))
     write_scan_assets(out)  # /scan.js for the in-browser scanner, /watch.js for the watchlist
     with open(f"{out}/changes.json", "w", encoding="utf-8") as fh:
@@ -611,7 +619,7 @@ def write_site(results, out, changes=None):
         for x in r["findings"]:
             rules.setdefault(x["rule"], x["severity"])
         summary = "".join(f"<li>{sev(v)} {esc(k)}</li>" for k, v in rules.items())
-        body = (f"<p class='crumb'><a href='/'>← All servers</a></p><div id='m'><div class='sh'>{g(esc(r['grade']), ' lg')}<div class='min0'>"
+        body = (f"<p class='crumb'><a href='/#lookup'>← Search all servers</a></p><div id='m'><div class='sh'>{g(esc(r['grade']), ' lg')}<div class='min0'>"
                 f"<h1 class='wrap'>{esc(r['title'])}</h1><p class='mut sm wrap'>{esc(r['name'])} · v{esc(r['version'])} · "
                 f"score {esc(str(r['score']))}/100 · checked {now}</p></div></div>"
                 f"<p class='wrap'>{esc(r['description'][:600])}</p>"
@@ -621,7 +629,7 @@ def write_site(results, out, changes=None):
             fh.write(page(f"{r['title']} MCP server: security check (grade {r['grade']})", body,
                           f"Automated, read-only security check of the {r['title']} MCP server: grade, findings, auth, tools. Updated daily."))
     with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
-        fh.write(page("MCP server security grade: mcpwatch", "<p class='crumb'><a href='/'>← All servers</a></p><div id='m'><p class='mut'>Loading…</p></div>"
+        fh.write(page("MCP server security grade: mcpwatch", "<p class='crumb'><a href='/#lookup'>← Search all servers</a></p><div id='m'><p class='mut'>Loading…</p></div>"
                       f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE).replace('HOWURL', HOW)}</script>", "mcpwatch security grade for an MCP server.", noindex=True))
 
     counts = {k: sum(r["grade"] == k for r in results) for k in "ABCDF"}
@@ -642,18 +650,21 @@ def write_site(results, out, changes=None):
             f"<ul class='trust'><li>Read-only checks</li><li>Never runs third-party code</li><li>Nothing leaves your machine</li>"
             f"<li>No cookies or trackers</li></ul></section>"
             f"<section aria-label='Index statistics'><div class='stats'>"
-            f"<div class='stat'><b>{len(results):,}</b><span>servers graded daily</span></div>"
-            f"<div class='stat'><b>{open_n:,}</b><span>list tools to anyone, no auth</span></div>"
-            f"<div class='stat'><b>{radar}</b><span>{radar_lbl}</span></div>"
+            f"<a class='stat' href='/#lookup'><b>{len(results):,}</b><span>servers graded daily →</span></a>"
+            f"<a class='stat' href='/probe'><b>{open_n:,}</b><span>list tools to anyone, no auth →</span></a>"
+            f"<a class='stat' href='/changes'><b>{radar}</b><span>{radar_lbl} →</span></a>"
             f"<div class='stat'><b>{now}</b><span>last run (UTC)</span></div></div>"
             f"<div class='dist' aria-hidden='true'>{dist}</div><ul class='legend'>"
-            + "".join(f"<li>{g(k)} {v:,}</li>" for k, v in counts.items()) + "</ul></section>"
+            + "".join(f"<li><a class='gl' href='/?grade={k}#lookup' aria-label='Show the {v:,} servers with grade {k}'>{g(k)} {v:,}</a></li>" for k, v in counts.items()) + "</ul></section>"
             f"<h2>Quickstart</h2><p class='mut'>Zero dependencies, Python 3.10+. Works with Claude Desktop, Claude Code (.mcp.json), Cursor and VS Code configs.</p>"
             f"<pre>pipx install mcpwatch-io</pre><ol class='steps'>"
             + "".join(f"<li><h3>{t}</h3><p class='mut sm'>{d}</p><pre>{esc(c)}</pre></li>" for t, d, c in steps) + "</ol>"
             f"<p class='sm'><a href='{GH}#github-action'>Run it as a GitHub Action →</a></p>"
-            f"<h2><label for='q'>Look up a server</label></h2>"
+            f"<h2 id='lookup'><label for='q'>Look up a server</label></h2>"
             f"<input id='q' type='search' autocomplete='off' spellcheck='false' placeholder='Search {len(results):,} servers by name…'>"
+            "<div id='gf' class='rbar' role='group' aria-label='Filter by grade'><button type='button' class='chip' data-g=''>All grades</button>"
+            + "".join(f"<button type='button' class='chip' data-g='{k}'>{k} <b>{v:,}</b></button>" for k, v in counts.items()) + "</div>"
+            "<script>if(location.hash==='#lookup')document.getElementById('q').focus({preventScroll:true})</script>"
             f"<p id='rc' class='mut sm' aria-live='polite'></p>"
             f"<table id='rt' hidden><thead><tr><th>Grade</th><th>Server</th><th class='n'>Findings</th></tr></thead><tbody id='res'></tbody></table>"
             f"<h2>Recent tool changes across the ecosystem</h2><p class='mut'>Every day mcpwatch compares each server's tools with the day before: "
