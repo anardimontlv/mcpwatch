@@ -65,19 +65,28 @@ def http(method, url, body=None, headers=None, timeout=20):
         return json.loads(r.read() or b"{}")
 
 
+def link_facets(text):
+    """Bluesky link facets for every URL in the text (byte offsets in UTF-8)."""
+    import re
+    out, b = [], text.encode()
+    for m in re.finditer(r"https?://[^\s)]+", text):
+        url = m.group(0).rstrip(".,;:")
+        start = len(text[:m.start()].encode())
+        out.append({"index": {"byteStart": start, "byteEnd": start + len(url.encode())},
+                    "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}]})
+    return out
+
+
 def post_bluesky(text):
     handle, pw = os.environ.get("BLUESKY_HANDLE"), os.environ.get("BLUESKY_APP_PASSWORD")
     if not (handle and pw):
         return "skipped (no credentials)"
     # https://docs.bsky.app/docs/advanced-guides/posts : createSession, then createRecord app.bsky.feed.post
     sess = http("POST", "https://bsky.social/xrpc/com.atproto.server.createSession", {"identifier": handle, "password": pw})
-    url = f"{SITE}/changes"
-    start = text.encode().find(url.encode())
     record = {"$type": "app.bsky.feed.post", "text": text,
               "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")}
-    if start >= 0:  # make the URL clickable (facets use UTF-8 byte offsets)
-        record["facets"] = [{"index": {"byteStart": start, "byteEnd": start + len(url.encode())},
-                             "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}]}]
+    if facets := link_facets(text):  # make URLs clickable
+        record["facets"] = facets
     http("POST", "https://bsky.social/xrpc/com.atproto.repo.createRecord",
          {"repo": sess["did"], "collection": "app.bsky.feed.post", "record": record},
          {"Authorization": f"Bearer {sess['accessJwt']}"})
@@ -146,12 +155,59 @@ def post_devto(article):
     return "posted"
 
 
+def changelog_entry(path, version):
+    """The paragraph under '## <version>' in CHANGELOG.md, or None."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return None
+    v = version.lstrip("v")
+    parts = text.split(f"\n## {v}\n", 1)
+    if len(parts) < 2:
+        return None
+    return parts[1].split("\n## ", 1)[0].strip() or None
+
+
+def release_post(version, entry):
+    """<= 300 chars: version, what's new, how to get it."""
+    tail = f"\n\npipx install -U mcpwatch-io\n{SITE}"
+    head = f"mcpwatch {version}: "
+    room = 300 - len(head) - len(tail)
+    body = entry if len(entry) <= room else entry[:room - 1].rsplit(" ", 1)[0] + "\u2026"
+    return head + body + tail
+
+
+def announce_release(version, changelog, dry_run=False):
+    entry = changelog_entry(changelog, version)
+    if not entry:
+        print(f"announce: no CHANGELOG entry for {version}; nothing posted")
+        return 0
+    text = release_post(version, entry)
+    if dry_run:
+        print(text)
+        return 0
+    results = {}
+    for name, fn in (("bluesky", lambda: post_bluesky(text)), ("mastodon", lambda: post_mastodon(text, f"mcpwatch-release-{version}"))):
+        try:
+            results[name] = fn()
+        except urllib.error.HTTPError as e:
+            results[name] = f"failed (HTTP {e.code})"
+        except Exception as e:
+            results[name] = f"failed ({type(e).__name__})"
+    print("announce release:", ", ".join(f"{k}={v}" for k, v in results.items()))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", default="site")
     ap.add_argument("--state", default="hist", help="dir where per-day 'posted' markers are kept")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--release", help="post a release announcement for this tag (e.g. v0.3.1) instead of the radar")
+    ap.add_argument("--changelog", default="CHANGELOG.md")
     a = ap.parse_args(argv)
+    if a.release:
+        return announce_release(a.release, a.changelog, a.dry_run)
     try:
         stats, changes = load(f"{a.site}/stats.json"), load(f"{a.site}/changes.json")
     except (OSError, ValueError) as e:

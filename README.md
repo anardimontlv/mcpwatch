@@ -149,6 +149,10 @@ Grades are automated signals, not audits. Maintainers can dispute a finding from
 The scanner, the Action and the public index are free. Paid plans add email and Slack watchlist alerts (Pro) and, for
 Team, shared seats, an org view of every repo with policy rules that fail CI (`mcpwatch report`), and audit export. See **https://www.mcpwatch.io/pricing**.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Each release is also announced on Bluesky and Mastodon.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The hosted index, radar and paid plans are a commercial service.
