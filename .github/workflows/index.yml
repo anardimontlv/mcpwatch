@@ -1,6 +1,6 @@
 name: daily index
 on:  # the full scan (registry + probes, ~20 min) runs daily; pushes only re-render pages (pages.yml)
-  schedule: [{ cron: "17 4 * * *" }]
+  schedule: [{ cron: "23 4 * * *" }]  # 06:23 Israel; edited to re-register the schedule after the repo rename + force-push
   workflow_dispatch:
     inputs:
       baseline:
