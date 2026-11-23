@@ -292,13 +292,15 @@ def main(argv=None):
         return 1 if n else 0
     if a.cmd == "lock":
         if a.live:
-            from mcpwatch.live import list_tools, snapshot_tools
+            from mcpwatch.live import read_server, snapshot_tools
             print("mcpwatch: --live launches each stdio server in your config and calls each remote one to read its tools", file=sys.stderr)
             for name, cfg in servers.items():
                 if not isinstance(cfg, dict):
                     continue
                 try:
-                    now.setdefault(name, {"slug": None})["live"] = snapshot_tools(list_tools(cfg))
+                    tools, instr = read_server(cfg)
+                    rec = now.setdefault(name, {"slug": None})
+                    rec["live"], rec["live_instr"] = snapshot_tools(tools), instr  # instructions reach the client too
                 except Exception as e:
                     print(f"  live: could not read tools from {name}: {type(e).__name__}: {str(e)[:120]}", file=sys.stderr)
         with open(a.lock, "w", encoding="utf-8") as fh:
@@ -319,7 +321,7 @@ def main(argv=None):
     items = drift_items(locked, now, a.max_stale)
     diffs = {}
     if a.live:
-        from mcpwatch.live import list_tools, snapshot_tools, live_diff
+        from mcpwatch.live import read_server, snapshot_tools, live_diff, instructions_diff
         for name, rec in locked.items():
             if rec.get("live") is None:
                 continue
@@ -327,7 +329,10 @@ def main(argv=None):
             try:
                 if not isinstance(cfg, dict):
                     raise ValueError("server is no longer in the config")
-                found = live_diff(rec["live"], snapshot_tools(list_tools(cfg)))
+                tools, instr = read_server(cfg)
+                found = live_diff(rec["live"], snapshot_tools(tools))
+                if "live_instr" in rec and (lines := instructions_diff(rec["live_instr"], instr)):
+                    found.append(("high", "instructions_changed", "server instructions", lines))
             except Exception as e:  # fail closed: an unreadable server is not a clean one
                 items.append({"server": name, "sev": "high", "kind": "live_check_failed", "detail": f"{type(e).__name__}: {str(e)[:120]}"})
                 continue

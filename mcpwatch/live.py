@@ -75,7 +75,7 @@ def list_tools_http(cfg, timeout=30):
         call({"jsonrpc": "2.0", "method": "notifications/initialized"})
     except urllib.error.HTTPError:
         pass  # many servers answer 202/4xx to notifications
-    return _pages(call)
+    return _pages(call), _instructions(init)
 
 
 def list_tools_stdio(cfg, timeout=30):
@@ -115,18 +115,38 @@ def list_tools_stdio(cfg, timeout=30):
         if "error" in init:
             raise RuntimeError("initialize failed")
         call({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return _pages(call)
+        return _pages(call), _instructions(init)
     finally:
         p.kill()
         p.wait(timeout=5)
 
 
-def list_tools(cfg, timeout=30):
+def _instructions(init):
+    """The server's `instructions` from the initialize result (sent to the client as guidance), or None."""
+    v = ((init or {}).get("result") or {}).get("instructions")
+    return v if isinstance(v, str) else None
+
+
+def read_server(cfg, timeout=30):
+    """(tools, instructions) straight from the server."""
     if isinstance(cfg.get("url"), str):
         return list_tools_http(cfg, timeout)
     if isinstance(cfg.get("command"), str):
         return list_tools_stdio(cfg, timeout)
     raise ValueError("server has neither a command nor a url")
+
+
+def list_tools(cfg, timeout=30):
+    return read_server(cfg, timeout)[0]
+
+
+def instructions_diff(approved, cur):
+    """[] when unchanged, else diff lines (hidden characters made visible)."""
+    import difflib
+    if approved == cur:
+        return []
+    a, b = visible(approved or "").splitlines(), visible(cur or "").splitlines()
+    return list(difflib.unified_diff(a, b, "approved instructions", "instructions now", lineterm="", n=1)) or ["(whitespace-only change)"]
 
 
 def live_diff(locked, cur):

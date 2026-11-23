@@ -498,7 +498,7 @@ function row(it){
  const g={},other=[];(it.changes||[]).forEach(c=>{if(KIND[c.kind])(g[c.kind]=g[c.kind]||[]).push(c.detail);else other.push(c)});
  const parts=[];if(g.tool_added)parts.push(plural(g.tool_added.length,'tool')+' added');if(g.tool_changed)parts.push(plural(g.tool_changed.length,'tool')+' changed');if(g.tool_removed)parts.push(plural(g.tool_removed.length,'tool')+' removed');
  other.forEach(c=>{if((c.kind==='auth_dropped'&&ks.includes('endpoint stopped requiring credentials'))||(c.kind==='grade_changed'&&ks.includes('grade dropped')))return;parts.push(String(c.kind).replace(/_/g,' ')+(c.detail?': '+c.detail:''))});
- li.append($('p',parts.join(' · ')||'No tool changes','rsum mut sm'));
+ li.append($('p',parts.join(' · ')||(ks.includes('endpoint stopped requiring credentials')?'Tools newly observed: no earlier tool list to compare, so this is the new baseline':'No tool changes'),'rsum mut sm'));
  const why=ks.filter(k=>EX[k]);
  if(Object.keys(g).length||why.length){const d=$('details',null,'rdet');const hasT=Object.keys(g).length;d.append($('summary',why.length&&hasT?'Why it matters and tool details':why.length?'Why it matters':'Tool details'));
   why.forEach(k=>{const w=$('div',null,'why');w.append($('p',EX[k].why),$('p','What to do: '+EX[k].do,'mut'));d.append(w)});

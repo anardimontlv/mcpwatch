@@ -1,4 +1,4 @@
-"""A minimal stdio MCP server for tests. Tools come from the FAKE_TOOLS env var (JSON list)."""
+"""A minimal stdio MCP server for tests. Tools come from FAKE_TOOLS (JSON list), initialize instructions from FAKE_INSTR."""
 import json, os, sys
 tools = json.loads(os.environ.get("FAKE_TOOLS", "[]"))
 print("starting (a log line on stdout that clients must skip)", flush=True)
@@ -8,6 +8,8 @@ for line in sys.stdin:
         continue
     if msg["method"] == "initialize":
         res = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "1"}}
+        if os.environ.get("FAKE_INSTR"):
+            res["instructions"] = os.environ["FAKE_INSTR"]
     elif msg["method"] == "tools/list":
         cur = (msg.get("params") or {}).get("cursor")
         res = {"tools": tools[1:]} if cur else ({"tools": tools[:1], "nextCursor": "p2"} if len(tools) > 1 else {"tools": tools})

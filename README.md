@@ -70,6 +70,9 @@ mcpwatch check .mcp.json --live   # fails on drift and prints a diff of the chan
 
 Hidden characters are shown as `\u200b`-style escapes, so invisible instructions become visible in the diff.
 
+The lock also pins each server's `instructions` (sent to the client in `initialize`): `check --live` diffs them, and
+`guard` serves only the approved text.
+
 `mcpwatch guard` sits in front of a stdio server and only lets your agent see the tools you approved. Changed or new
 tools are removed from `tools/list`, and calls to them are refused before they reach the server:
 

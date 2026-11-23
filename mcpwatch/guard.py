@@ -5,6 +5,7 @@
 Put it in front of a stdio server in your MCP client config (command "mcpwatch", args ["guard", ...]). It starts the
 real server and relays every message. In tools/list answers it removes any tool whose description or input schema
 differs from the approved copy in mcpwatch.lock (written by `mcpwatch lock --live`), and new tools unless --allow-new;
+the server's initialize `instructions` are replaced by the approved text;
 calls to a removed tool get an error without reaching the server. Blocked tools are reported on stderr (your MCP
 client's server log). Without a live lock entry for --name it refuses to start: fail closed.
 """
@@ -18,8 +19,11 @@ class Guard:
     """Every client request gets a guard-issued id (mapped back on the way out), so a server can only answer requests
     the guard saw, and a tools/list answer can't dodge the filter with an id that merely looks different (1 vs 1.0)."""
 
-    def __init__(self, approved, allow_new=False, log=None):
+    UNPINNED = object()  # lock written before instructions were pinned: leave them as the server sends them
+
+    def __init__(self, approved, allow_new=False, log=None, instructions=UNPINNED):
         self.approved, self.allow_new = approved, allow_new  # approved: {tool: full_hash}
+        self.instructions = instructions  # approved server instructions (None = none approved)
         self.pending, self.seq, self.blocked, self.lock = {}, 0, set(), threading.Lock()
         self.log = log or (lambda m: print(f"mcpwatch guard: {m}", file=sys.stderr, flush=True))
 
@@ -61,6 +65,14 @@ class Guard:
         orig_id, method = entry
         msg = {**msg, "id": orig_id}
         result = msg.get("result")
+        if method == "initialize" and isinstance(result, dict) and self.instructions is not Guard.UNPINNED:
+            if result.get("instructions") != self.instructions:  # the client only ever gets the approved text
+                self.log("server instructions changed since you approved them: serving the approved version")
+                result = {k: v for k, v in result.items() if k != "instructions"}
+                if self.instructions is not None:
+                    result["instructions"] = self.instructions
+                return {**msg, "result": result}
+            return msg
         if method != "tools/list" or not isinstance(result, dict):
             return msg
         tools = result.get("tools")
@@ -132,13 +144,16 @@ def main(argv=None):
         ap.error("give the server command after --")
     try:
         with open(a.lock, encoding="utf-8") as fh:
-            live = json.load(fh)["servers"][a.name]["live"]
-        approved = {n: t["f"] for n, t in live.items()}
+            entry = json.load(fh)["servers"][a.name]
+        approved = {n: t["f"] for n, t in entry["live"].items()}
+        instructions = entry.get("live_instr", Guard.UNPINNED)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         print(f"mcpwatch guard: no approved tools for '{a.name}' in {a.lock}: run `mcpwatch lock --live` first", file=sys.stderr)
         return 2
     child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=os.environ)  # stderr passes through
-    return relay(Guard(approved, a.allow_new), child, sys.stdin.buffer, sys.stdout.buffer)
+    if instructions is Guard.UNPINNED:
+        print("mcpwatch guard: server instructions aren't pinned in this lock; re-run `mcpwatch lock --live` to pin them", file=sys.stderr)
+    return relay(Guard(approved, a.allow_new, instructions=instructions), child, sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":
