@@ -664,7 +664,7 @@ def write_site(results, out, changes=None):
             f"<input id='q' type='search' autocomplete='off' spellcheck='false' placeholder='Search {len(results):,} servers by name…'>"
             "<div id='gf' class='rbar' role='group' aria-label='Filter by grade'><button type='button' class='chip' data-g=''>All grades</button>"
             + "".join(f"<button type='button' class='chip' data-g='{k}'>{k} <b>{v:,}</b></button>" for k, v in counts.items()) + "</div>"
-            "<script>if(location.hash==='#lookup')document.getElementById('q').focus({preventScroll:true})</script>"
+            "<script>addEventListener('load',()=>{if(location.hash==='#lookup')document.getElementById('q').focus({preventScroll:true})})</script>"
             f"<p id='rc' class='mut sm' aria-live='polite'></p>"
             f"<table id='rt' hidden><thead><tr><th>Grade</th><th>Server</th><th class='n'>Findings</th></tr></thead><tbody id='res'></tbody></table>"
             f"<h2>Recent tool changes across the ecosystem</h2><p class='mut'>Every day mcpwatch compares each server's tools with the day before: "
