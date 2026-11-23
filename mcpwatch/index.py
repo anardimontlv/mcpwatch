@@ -316,6 +316,17 @@ th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mu
 .price{font-size:2.25rem;font-weight:700;letter-spacing:-.03em;margin:8px 0 0}.price small{font-size:.875rem;font-weight:400;color:var(--mut);letter-spacing:0}
 .soon{margin:0;padding:10px;border:1px dashed var(--line);border-radius:8px;text-align:center;color:var(--mut);font-size:.875rem}
 .prose{max-width:720px}.prose h2{font-size:1.125rem;margin-top:2em}
+.rlist li.rrow{padding:14px 0}.rhd{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}.rname{font-weight:600;margin-right:4px}.rsum{margin:4px 0 0}
+.badge{display:inline-flex;align-items:center;padding:1px 9px;border-radius:99px;font-size:.75rem;font-weight:600;line-height:1.7;white-space:nowrap;border:1px solid transparent}
+.b-cr{background:rgb(196 34 46/.1);color:#a8151f;border-color:rgb(196 34 46/.35)}.b-hi{background:rgb(188 76 0/.1);color:#8f3a00;border-color:rgb(188 76 0/.35)}.b-md{background:rgb(138 90 0/.1);color:#6e4800;border-color:rgb(138 90 0/.35)}
+@media (prefers-color-scheme:dark){.b-cr{color:#ffa3a3}.b-hi{color:#ffb98a}.b-md{color:#ecc66e}}
+.rbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0 8px}
+.chip{font:inherit;font-size:.875rem;min-height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+.chip b{margin-left:6px;font-variant-numeric:tabular-nums}.chip[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--on)}
+.rbar input[type=search]{flex:1 1 220px;width:auto;min-height:36px;border-radius:99px;font-size:.875rem}
+.rdet summary,.legend-why summary,.routine summary{cursor:pointer;color:var(--acc);font-size:.875rem;margin-top:6px}
+.legend-why{margin:0 0 8px}.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0;font-size:.9375rem}.why p{margin:0 0 4px}
+.tl{font-size:.875rem;margin:8px 0}.tl code{font-size:.8125rem}.routine{margin-top:16px}
 @media (max-width:600px){.card{padding:16px}td,th{padding:8px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}"""
 
@@ -406,32 +417,62 @@ m.replaceChildren(...top,k,c,b)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
 """
 
-CHANGES_JS = """
+CHANGES_JS = r"""
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
 const box=document.getElementById('c');
-const row=it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
-const nb=it.notable||[];nb.forEach(w=>cs.append($('span',w,'tag')));
-const ex=[...new Set(nb.map(w=>String(w).split(' (')[0]))].map(k=>EX[k]).filter(Boolean);
-const covered=k=>(k==='auth_dropped'&&nb.some(w=>w.includes('credentials')))||(k==='grade_changed'&&nb.some(w=>w.startsWith('grade dropped')));
-it.changes.filter(c=>!covered(c.kind)).forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);
-if(ex.length){const d=$('details',null,'why');d.append($('summary','Why it matters'));ex.forEach(e=>{d.append($('p',e.why),$('p','What to do: '+e.do,'mut'))});li.append(d)}
-return li};
+// notable reason -> [short label, severity class]; order = display priority
+const R={'new tool text matches a tool-poisoning pattern':['Tool-poisoning text','cr'],'new tool text contains invisible characters':['Hidden characters','cr'],
+'endpoint stopped requiring credentials':['Auth removed','hi'],'a newly added tool can execute commands or delete data':['Exec/delete tool added','hi'],'grade dropped':['Grade dropped','md']};
+const ORDER=Object.keys(R);
+const key=w=>String(w).split(' (')[0];
+const lab=w=>{const k=key(w),m=/\(([A-F]) -> ([A-F])\)/.exec(w);return k==='grade dropped'&&m?'Grade '+m[1]+' → '+m[2]:(R[k]||[w])[0]};
+const KIND={tool_added:'Added',tool_changed:'Changed',tool_removed:'Removed'};
+const plural=(n,w)=>n.toLocaleString()+' '+w+(n===1?'':'s');
+function row(it){
+ const li=$('li',null,'rrow'),hd=$('div',null,'rhd'),a=$('a',it.name,'rname wrap');a.href='/s/'+it.slug;hd.append(a);
+ const nb=it.notable||[],ks=[...new Set(nb.map(key))];
+ nb.slice().sort((x,y)=>ORDER.indexOf(key(x))-ORDER.indexOf(key(y))).forEach(w=>{const k=key(w),b=$('span',lab(w),'badge b-'+((R[k]||[0,'md'])[1]));if(EX[k])b.title=EX[k].why;hd.append(b)});
+ li.append(hd);
+ const g={},other=[];(it.changes||[]).forEach(c=>{if(KIND[c.kind])(g[c.kind]=g[c.kind]||[]).push(c.detail);else other.push(c)});
+ const parts=[];if(g.tool_added)parts.push(plural(g.tool_added.length,'tool')+' added');if(g.tool_changed)parts.push(plural(g.tool_changed.length,'tool')+' changed');if(g.tool_removed)parts.push(plural(g.tool_removed.length,'tool')+' removed');
+ other.forEach(c=>{if((c.kind==='auth_dropped'&&ks.includes('endpoint stopped requiring credentials'))||(c.kind==='grade_changed'&&ks.includes('grade dropped')))return;parts.push(String(c.kind).replace(/_/g,' ')+(c.detail?': '+c.detail:''))});
+ li.append($('p',parts.join(' · ')||'No tool changes','rsum mut sm'));
+ const why=ks.filter(k=>EX[k]);
+ if(Object.keys(g).length||why.length){const d=$('details',null,'rdet');const hasT=Object.keys(g).length;d.append($('summary',why.length&&hasT?'Why it matters and tool details':why.length?'Why it matters':'Tool details'));
+  why.forEach(k=>{const w=$('div',null,'why');w.append($('p',EX[k].why),$('p','What to do: '+EX[k].do,'mut'));d.append(w)});
+  Object.keys(KIND).forEach(k=>{if(!g[k])return;const p=$('p',null,'tl');p.append($('strong',KIND[k]+' ('+g[k].length+') '));
+   p.append($('code',g[k].slice(0,40).join(', ')+(g[k].length>40?' … and '+(g[k].length-40)+' more':''),'wrap'));d.append(p)});
+  li.append(d)}
+ li.dataset.k=ks.join('|');li.dataset.n=String(it.name).toLowerCase();
+ return li}
+function day(d){const s=$('section',null,'day'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
+ s.append($('h2',d.date),$('p',plural(d.items.length,'server')+' changed their tools · '+hot.length+' notable','mut'));
+ if(!hot.length){s.append($('p','Nothing matched our checks for dropped auth, falling grades or suspicious tool text.','mut'))}
+ else{const cnt={};hot.forEach(i=>[...new Set(i.notable.map(key))].forEach(k=>{cnt[k]=(cnt[k]||0)+1}));
+  const bar=$('div',null,'rbar'),ul=$('ul',null,'feed rlist'),empty=$('p','No notable changes match.','mut sm');empty.hidden=true;
+  let sel='all',q='';
+  const apply=()=>{let v=0;for(const li of ul.children){const ok=(sel==='all'||li.dataset.k.split('|').includes(sel))&&(!q||li.dataset.n.includes(q));li.hidden=!ok;if(ok)v++}empty.hidden=v>0};
+  const chip=(id,text,n)=>{const b=$('button',null,'chip');b.type='button';b.setAttribute('aria-pressed',String(id===sel));b.append(text,$('b',String(n)));
+   b.addEventListener('click',()=>{sel=id;bar.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c===b)));apply()});return b};
+  bar.append(chip('all','All notable',hot.length));ORDER.filter(k=>cnt[k]).forEach(k=>bar.append(chip(k,R[k][0],cnt[k])));
+  const f=$('input');f.type='search';f.placeholder='Filter by server name';f.setAttribute('aria-label','Filter notable changes by server name');
+  f.addEventListener('input',()=>{q=f.value.trim().toLowerCase();apply()});bar.append(f);
+  const lg=$('details',null,'legend-why'),ls=$('summary','What these labels mean');lg.append(ls);
+  ORDER.filter(k=>cnt[k]&&EX[k]).forEach(k=>{const w=$('div',null,'why'),t=$('p');t.append($('span',R[k][0],'badge b-'+R[k][1]),' ',EX[k].why);w.append(t,$('p','What to do: '+EX[k].do,'mut'));lg.append(w)});
+  const worst=i=>Math.min(...i.notable.map(w=>{const x=ORDER.indexOf(key(w));return x<0?99:x}));
+  hot.slice().sort((x,y)=>worst(x)-worst(y)).slice(0,200).forEach(i=>ul.append(row(i)));s.append(bar,lg,ul,empty)}
+ if(rest.length){const det=$('details',null,'routine'),sm=$('summary',plural(rest.length,'routine update')+' (reworded descriptions, new or removed tools)');
+  const pub=i=>String(i.name).split('/')[0],by=new Map();rest.forEach(i=>{const k=pub(i);if(!by.has(k))by.set(k,[]);by.get(k).push(i)});
+  const ul=$('ul',null,'feed rlist');let shown=0;
+  [...by.keys()].sort((x,y)=>by.get(y).length-by.get(x).length).forEach(p=>{const g=by.get(p);
+   if(g.length>10){const li=$('li',null,'rrow'),d2=$('details'),s2=$('summary',p+': '+g.length+' servers from one publisher updated their tools'),u2=$('ul',null,'feed rlist');
+    g.slice(0,100).forEach(i=>u2.append(row(i)));d2.append(s2,u2);li.append(d2);ul.append(li)}
+   else g.forEach(i=>{if(shown++<300)ul.append(row(i))})});
+  det.append(sm,ul);s.append(det)}
+ return s}
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
 if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
-days.forEach(d=>{try{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
-s.append($('h2',d.date));
-const h=$('h3',hot.length?hot.length+' notable change'+(hot.length===1?'':'s'):'No notable changes');s.append(h);
-if(hot.length){const ul=$('ul',null,'feed');hot.slice(0,200).forEach(i=>ul.append(row(i)));s.append(ul)}
-else s.append($('p','Nothing matched our checks for dropped auth, falling grades or suspicious tool text.','mut'));
-if(rest.length){const det=$('details'),sm=$('summary',rest.length+' routine update'+(rest.length===1?'':'s')+' (reworded descriptions, new or removed tools)');
-const pub=i=>String(i.name).split('/')[0],by=new Map();rest.forEach(i=>{const k=pub(i);if(!by.has(k))by.set(k,[]);by.get(k).push(i)});
-const ul=$('ul',null,'feed');let shown=0;
-[...by.keys()].sort((x,y)=>by.get(y).length-by.get(x).length).forEach(p=>{const g=by.get(p);
- if(g.length>10){const li=$('li'),d2=$('details'),s2=$('summary',p+': '+g.length+' servers from one publisher updated their tools'),u2=$('ul',null,'feed');
-  g.slice(0,100).forEach(i=>u2.append(row(i)));d2.append(s2,u2);li.append(d2);ul.append(li)}
- else g.forEach(i=>{if(shown++<300)ul.append(row(i))})});
-det.append(sm,ul);s.append(det)}
-box.append(s)}catch(e){box.append($('p','Could not render the changes for '+String(d&&d.date),'mut'))}})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
+days.forEach(d=>{try{box.append(day(d))}catch(e){box.append($('p','Could not render the changes for '+String(d&&d.date),'mut'))}})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
 SEARCH_JS = """
