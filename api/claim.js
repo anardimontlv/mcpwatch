@@ -77,8 +77,10 @@ module.exports = L.handler(async (req, res) => {
     await L.sql(`DELETE FROM maintainer_claims WHERE slug = $1`, [slug]); // claim file gone or no longer lists this server
     throw new L.HttpError(404, `no .mcpwatch file in ${repo} (default branch) with the line "claim: ${slug}". GitHub can take ~5 minutes to serve a new file`);
   }
-  // only a real claim file reaches the GitHub API, and a global cap keeps us under its unauthenticated 60/hour
-  if (await L.limited("claim-gh", "global", 50)) throw new L.HttpError(429, "too many claim checks right now, try again in an hour");
+  // only a real claim file reaches the GitHub API; each server gets its own small budget, and a global cap keeps us
+  // under GitHub's quota (60/hour unauthenticated, 5,000 with GITHUB_TOKEN)
+  if (await L.limited("claim-gh-slug", slug, 3)) throw new L.HttpError(429, "this server was checked recently, try again in an hour");
+  if (await L.limited("claim-gh", "global", process.env.GITHUB_TOKEN ? 4000 : 50)) throw new L.HttpError(429, "too many claim checks right now, try again in an hour");
   let info;
   try {
     info = await L.deps.githubRepoInfo(repo);

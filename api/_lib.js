@@ -101,7 +101,8 @@ async function fetchText(url, max) {
 // {id, owner_id, owner} of a public GitHub repo, or null if it doesn't exist. No redirects: a renamed repo must be re-checked.
 async function githubRepoInfo(repo) {
   const r = await fetch(`https://api.github.com/repos/${repo}`, { redirect: "error",
-    headers: { "User-Agent": "mcpwatch", Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(8000) });
+    headers: { "User-Agent": "mcpwatch", Accept: "application/vnd.github+json",
+      ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) }, signal: AbortSignal.timeout(8000) });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const j = await r.json();

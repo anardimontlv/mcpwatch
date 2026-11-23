@@ -640,6 +640,12 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   assert.equal((await post({ slug: id })).status, 404);
   file = `claim: ${id}`;
   assert.equal((await post({ slug: id })).status, 409, "pins outlive revocation");
+  // per-server GitHub budget: 3 checks/hour per server, whoever asks
+  db.rl = [];
+  ghInfo = { id: "111", owner_id: "222", owner: "acme" };
+  for (let i = 0; i < 3; i++) await call(claim, { url: "/api/claim", body: { slug: id }, ip: "8.8.8." + i });
+  assert.equal((await call(claim, { url: "/api/claim", body: { slug: id }, ip: "9.9.9.9" })).status, 429);
+  db.rl = [];
   // no claim line -> GitHub API never called
   let ghCalls = 0;
   L.deps.githubRepoInfo = async () => { ghCalls++; return ghInfo; };
