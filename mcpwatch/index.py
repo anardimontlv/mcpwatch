@@ -283,7 +283,7 @@ h2{font-size:1.375rem;margin-top:2.4em}h3{font-size:1rem;margin:0 0 .25em}p{marg
 .card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin:16px 0}.card h2{font-size:1.0625rem;margin-top:0}
 .hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}
 .eye{display:inline-block;font:500 .8125rem/1 var(--mono);color:var(--acc);background:var(--soft);padding:6px 10px;border-radius:99px;margin-bottom:16px}
-[hidden]{display:none!important}#lookup{scroll-margin-top:24px}a.stat{color:inherit;text-decoration:none;transition:border-color .15s}a.stat:hover{border-color:var(--acc)}a.stat:hover span{color:var(--acc)}a.gl{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:2px 4px}a.gl:hover{background:var(--sf)}
+[hidden]{display:none!important}.feat{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.feat li{margin:0;border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--sf)}.feat h3 a{color:var(--fg);text-decoration:none}.feat h3 a:hover{color:var(--acc)}.feat p{margin:0}#lookup{scroll-margin-top:24px}a.stat{color:inherit;text-decoration:none;transition:border-color .15s}a.stat:hover{border-color:var(--acc)}a.stat:hover span{color:var(--acc)}a.gl{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:2px 4px}a.gl:hover{background:var(--sf)}
 .cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 20px}
 .btn{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-weight:600;text-decoration:none;transition:border-color .15s,box-shadow .15s}
 .btn:hover{border-color:var(--mut)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on)}
@@ -350,7 +350,10 @@ HOW = GH + "/blob/main/docs/how-it-works.md"
 def page(title, body, desc, noindex=False):
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             + ('<meta name="robots" content="noindex">' if noindex else '') +
-            f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}"><style>{CSS}</style></head>'
+            f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}">'
+            f'<meta property="og:type" content="website"><meta property="og:site_name" content="mcpwatch"><meta property="og:title" content="{esc(title)}">'
+            f'<meta property="og:description" content="{esc(desc)}"><meta property="og:image" content="{BASE}/og.png"><meta property="og:image:width" content="1200">'
+            f'<meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><style>{CSS}</style></head>'
             f'<body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="in"><a class="brand" href="/">{LOGO}mcpwatch</a>'
             f'<nav aria-label="Main"><a href="/scan">Scan</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="{GH}#quickstart">Docs</a><a href="{GH}">GitHub</a></nav></div></header>'
             f'<main id="main">{body}</main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety. Servers listed here are third-party projects from the public MCP registry; mcpwatch does not sell, operate or endorse them. mcpwatch sells one product: developer security monitoring (<a href="/pricing">pricing</a>).</p>'
@@ -641,11 +644,12 @@ def write_site(results, out, changes=None):
     radar_lbl = f"servers changed on {esc(latest['date'])}" if latest.get("date") else "servers changed (baseline pending)"
     steps = [("Scan", "Flag leaked secrets, unpinned packages, plain HTTP and root filesystem access.", "mcpwatch-scan ~/.cursor/mcp.json"),
              ("Lock", "Pin the exact tools your servers expose today. Commit mcpwatch.lock.", "mcpwatch lock .mcp.json"),
-             ("Check", "Fail CI when any pinned tool changes: exit 1 on drift.", "mcpwatch check .mcp.json")]
+             ("Check", "Fail CI when any pinned tool changes: exit 1 on drift. Add --live to see the exact sentence that changed.", "mcpwatch check .mcp.json"),
+             ("Guard", "Block changed tools at runtime: your agent only sees the tools you approved.", "mcpwatch guard --name gh -- <server cmd>")]
     body = (f"<section class='hero'><span class='eye'>Rug-pull radar for MCP</span><h1>Know when the tools your AI agents trust change.</h1>"
             f"<p class='lede'>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch checks every server in the "
             f"official MCP registry daily, fingerprints the tools of every remote server it can reach, grades them for leaked secrets, "
-            f"plain-HTTP endpoints, unauthenticated access and poisoned descriptions, and fails your CI when a tool you pinned changes.</p>"
+            f"plain-HTTP endpoints, unauthenticated access and poisoned descriptions, fails your CI when a tool you pinned changes, and can block changed tools before your agent ever reads them.</p>"
             f"<div class='cta'><a class='btn pri' href='/scan'>Scan your config</a><a class='btn' href='/changes'>See today's radar →</a></div>"
             f"<ul class='trust'><li>Read-only checks</li><li>Never runs third-party code</li><li>Nothing leaves your machine</li>"
             f"<li>No cookies or trackers</li></ul></section>"
@@ -660,6 +664,7 @@ def write_site(results, out, changes=None):
             f"<pre>pipx install mcpwatch-io</pre><ol class='steps'>"
             + "".join(f"<li><h3>{t}</h3><p class='mut sm'>{d}</p><pre>{esc(c)}</pre></li>" for t, d, c in steps) + "</ol>"
             f"<p class='sm'><a href='{GH}#github-action'>Run it as a GitHub Action →</a></p>"
+            f"<h2>Everything in mcpwatch</h2><ul class='feat'><li><h3><a href='/watch'>Watchlist alerts</a></h3><p class='mut sm'>An email or Slack message when a server you depend on changes, with a plain-language note on why it matters.</p></li><li><h3><a href='/pricing'>For teams</a></h3><p class='mut sm'>Teammates on one watchlist, an org view of every repo's MCP config with CI policy rules, and audit export.</p></li><li><h3><a href='{GH}#lookup-api'>Lookup API</a></h3><p class='mut sm'>One call to grade any MCP server by URL or package. Rule codes only, safe to hand to a model.</p></li><li><h3><a href='{GH}#quickstart'>MCP server</a></h3><p class='mut sm'>Let your agent check a server before it connects: uvx mcpwatch-io.</p></li><li><h3><a href='{GH}#for-maintainers-claim-your-page'>For maintainers</a></h3><p class='mut sm'>Claim your server's page with a file in your repo and respond to findings.</p></li><li><h3><a href='{GH}'>Open source</a></h3><p class='mut sm'>Zero dependencies, Apache-2.0. The probe is read-only and never calls a tool.</p></li></ul>"
             f"<h2 id='lookup'><label for='q'>Look up a server</label></h2>"
             f"<input id='q' type='search' autocomplete='off' spellcheck='false' placeholder='Search {len(results):,} servers by name…'>"
             "<div id='gf' class='rbar' role='group' aria-label='Filter by grade'><button type='button' class='chip' data-g=''>All grades</button>"
