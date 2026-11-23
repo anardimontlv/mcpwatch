@@ -30,6 +30,40 @@ def neon_query(query, params):
     return [dict(zip(names, row)) for row in j["rows"]]
 
 
+# same as SLACK_HOOK in api/_lib.js: the host is fixed, so a stored URL can't redirect our request anywhere else
+SLACK_HOOK = re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9_-]{4,40}/[A-Za-z0-9_-]{4,40}/[A-Za-z0-9_-]{8,80}")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def slack_post(url, text):
+    if not SLACK_HOOK.fullmatch(url or ""):
+        return False
+    req = urllib.request.Request(url, method="POST", data=json.dumps({"text": text}).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": UA})
+    with urllib.request.build_opener(_NoRedirect).open(req, timeout=15) as r:
+        return 200 <= r.status < 300
+
+
+def slack_text(date, items, since=None):
+    """Slack mrkdwn. Names and details are already identifier-only; &, < and > are escaped so nothing becomes a link or mention."""
+    esc = lambda v: str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    head = f"*mcpwatch:* {len(items)} watched server{'s' if len(items) != 1 else ''} changed " + (f"from {since} to {date}" if since else f"on {date}")
+    lines = [head]
+    for it in items[:20]:
+        n = len(it.get("changes") or [])
+        line = f"• <{SITE}/s/{it['slug']}|{esc(it.get('name', it['slug']))}>: {n} change{'s' if n != 1 else ''}"
+        if it.get("notable"):
+            line += " — *notable:* " + esc("; ".join(it["notable"]))
+        lines.append(line)
+    if len(items) > 20:
+        lines.append(f"…and {len(items) - 20} more. Full list in your email digest.")
+    return "\n".join(lines)
+
+
 def resend_send(to, subject, text, key):
     req = urllib.request.Request("https://api.resend.com/emails", method="POST", data=json.dumps(
         {"from": os.environ.get("MAIL_FROM") or "mcpwatch <alerts@mcpwatch.io>", "to": [to], "subject": subject, "text": text}).encode(),
@@ -46,12 +80,12 @@ EFFECTIVE_PLAN = ("CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', '
 
 def watchers(slugs, query):
     """{email: {"id", "plan", "slugs"}} for confirmed users watching any of `slugs`. One query."""
-    rows = query("SELECT u.id, u.email, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users u JOIN watches w ON w.user_id = u.id "
+    rows = query("SELECT u.id, u.email, u.slack_webhook, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users u JOIN watches w ON w.user_id = u.id "
                  "WHERE u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
                  "ORDER BY u.email, w.slug", [json.dumps(sorted(slugs))])
     out = {}
     for r in rows:
-        u = out.setdefault(r["email"], {"id": r["id"], "plan": r.get("plan") or "free", "slugs": set()})
+        u = out.setdefault(r["email"], {"id": r["id"], "plan": r.get("plan") or "free", "slack": r.get("slack_webhook"), "slugs": set()})
         u["slugs"].add(r["slug"])
     return out
 
@@ -89,8 +123,9 @@ def render(date, items, unsub_url, since=None):
     return subject, "\n".join(lines)
 
 
-def run(changes, today, query, send, dry_run=False, billing=False):
-    """Returns (sent, failed). `query(sql, params)` and `send(to, subject, text, idempotency_key)` are injected."""
+def run(changes, today, query, send, dry_run=False, billing=False, slack=slack_post):
+    """Returns (sent, failed) for email. `query(sql, params)`, `send(to, subject, text, idempotency_key)` and
+    `slack(url, text)` are injected. Slack goes to users who set a webhook: everyone in the beta, Pro/Team with billing on."""
     changes = changes or []
     daily = (changes[0].get("items") or []) if changes and changes[0].get("date") == today else []
     since = (date.fromisoformat(today) - timedelta(days=6)).isoformat()
@@ -106,12 +141,18 @@ def run(changes, today, query, send, dry_run=False, billing=False):
         week = billing and u["plan"] == "free"
         its = pick(weekly if week else daily, u["slugs"])
         if its:
-            users[email] = (u["id"], its, since if week else None)
-    sent = failed = 0
-    for email, (uid, its, wk) in users.items():
+            users[email] = (u["id"], its, since if week else None, u["slack"] if not (billing and u["plan"] == "free") else None)
+    sent = failed = s_sent = s_failed = 0
+    for email, (uid, its, wk, hook) in users.items():
         if dry_run:
             sent += 1
             continue
+        if hook:
+            try:
+                ok = slack(hook, slack_text(today, its, wk))
+            except Exception:  # never print the URL: it is the credential
+                ok = False
+            s_sent, s_failed = s_sent + bool(ok), s_failed + (not ok)
         try:
             # a fresh unsubscribe token per digest (only its hash is stored, so an old one can't be re-sent);
             # earlier digests' links keep working for 90 days
@@ -126,7 +167,8 @@ def run(changes, today, query, send, dry_run=False, billing=False):
         except Exception as e:  # one bad send must not stop the others; never print the address
             failed += 1
             print(f"digest: send failed ({type(e).__name__}{': HTTP ' + str(e.code) if hasattr(e, 'code') else ''})")
-    print(f"digest: {len(users)} recipient(s), {sent} {'would be ' if dry_run else ''}sent, {failed} failed")
+    print(f"digest: {len(users)} recipient(s), {sent} {'would be ' if dry_run else ''}sent, {failed} failed"
+          + (f"; slack {s_sent} sent, {s_failed} failed" if s_sent or s_failed else ""))
     return sent, failed
 
 

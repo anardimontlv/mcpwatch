@@ -94,8 +94,8 @@ Grades are automated signals, not audits. Maintainers can dispute a finding from
 
 ## Plans
 
-The scanner, the Action and the public index are free. Paid plans add email watchlist alerts for the servers you
-depend on (Slack and an org-wide view are on the roadmap). See **https://www.mcpwatch.io/pricing**.
+The scanner, the Action and the public index are free. Paid plans add email and Slack watchlist alerts for the
+servers you depend on (an org-wide view is on the roadmap). See **https://www.mcpwatch.io/pricing**.
 
 ## License
 

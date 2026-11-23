@@ -14,8 +14,9 @@ CHANGES = [{"date": TODAY, "items": [B, A, C]}, {"date": "2026-11-21", "items": 
 
 
 class FakeDB:
-    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com"), plans=None):
+    def __init__(self, watches, confirmed=("ann@example.com", "bob@example.com"), plans=None, slack=None):
         self.watches, self.confirmed, self.queries, self.unsub, self.plans = watches, set(confirmed), [], {}, plans or {}
+        self.slack = slack or {}
         self.ids = {e: str(i) for i, e in enumerate(sorted({e for e, _ in watches}), 1)}
 
     def __call__(self, q, params):
@@ -23,7 +24,7 @@ class FakeDB:
         if q.startswith("SELECT u.id, u.email"):
             wanted = set(json.loads(params[0]))
             assert "AS plan" in q and "past_due_since > now() - interval '7 days'" in q  # plan is enforced by status in SQL
-            return [{"id": self.ids[e], "email": e, "slug": s, "plan": self.plans.get(e, "free")}
+            return [{"id": self.ids[e], "email": e, "slug": s, "plan": self.plans.get(e, "free"), "slack_webhook": self.slack.get(e)}
                     for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
         if q.startswith("INSERT INTO tokens") and "'unsub'" in q:
             self.unsub.setdefault(params[0], []).append(params[1])  # older tokens are kept, not replaced
@@ -31,6 +32,46 @@ class FakeDB:
         if q.startswith("DELETE FROM tokens WHERE expires_at < now()"):
             return []
         raise AssertionError("unexpected query " + q)
+
+
+HOOK = "https://hooks.slack.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234"
+
+
+class Slack(unittest.TestCase):
+    def test_posts_to_users_with_a_webhook_escaped_and_plan_gated(self):
+        evil = dict(A, name="<!channel> & <https://x.example|click>")
+        db = FakeDB([("ann@example.com", A["slug"]), ("bob@example.com", B["slug"])], slack={"ann@example.com": HOOK},
+                    plans={"bob@example.com": "pro"})
+        posts = []
+        changes = [{"date": TODAY, "items": [evil, B]}]
+        with redirect_stdout(io.StringIO()) as out:
+            digest.run(changes, TODAY, db, lambda *a: True, slack=lambda u, t: posts.append((u, t)) or True)
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][0], HOOK)
+        self.assertNotIn("<!channel>", posts[0][1])
+        self.assertIn("&lt;!channel&gt; &amp;", posts[0][1])
+        self.assertIn(f"<https://www.mcpwatch.io/s/{A['slug']}|", posts[0][1])
+        self.assertNotIn("hooks.slack.com", out.getvalue(), "webhook URL never logged")
+        # billing on: a free user's webhook is not used
+        posts.clear()
+        with redirect_stdout(io.StringIO()):
+            digest.run(changes, TODAY, FakeDB([("ann@example.com", A["slug"])], slack={"ann@example.com": HOOK}), lambda *a: True,
+                       billing=True, slack=lambda u, t: posts.append(u) or True)
+        self.assertEqual(posts, [])
+
+    def test_slack_failure_does_not_affect_email(self):
+        db = FakeDB([("ann@example.com", A["slug"])], slack={"ann@example.com": HOOK})
+        def boom(u, t):
+            raise OSError(HOOK)
+        with redirect_stdout(io.StringIO()) as out:
+            res = digest.run([{"date": TODAY, "items": [A]}], TODAY, db, lambda *a: True, slack=boom)
+        self.assertEqual(res, (1, 0))
+        self.assertIn("slack 0 sent, 1 failed", out.getvalue())
+        self.assertNotIn("hooks.slack.com", out.getvalue())
+
+    def test_slack_post_refuses_other_hosts(self):
+        self.assertFalse(digest.slack_post("https://evil.example.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234", "x"))
+        self.assertFalse(digest.slack_post(None, "x"))
 
 
 class Digest(unittest.TestCase):

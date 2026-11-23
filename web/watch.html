@@ -5,6 +5,9 @@
 <section class="card"><h2>Your watchlist</h2><p id="w-who" class="mut sm wrap"></p><ul id="w-list" class="feed"></ul>
 <p class="cta" id="w-bill" hidden></p>
 <p class="cta"><button type="button" class="btn" id="w-delete">Delete my account</button></p></section>
+<section class="card" id="w-slack"><h2>Slack alerts</h2><p id="w-slack-st" class="mut sm">Also post the daily digest to a Slack channel. In Slack, create an <a href="https://api.slack.com/messaging/webhooks">incoming webhook</a> and paste its URL.</p>
+<p><label for="w-slack-url" class="vh">Slack webhook URL</label><input id="w-slack-url" type="url" autocomplete="off" spellcheck="false" style="width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit" placeholder="https://hooks.slack.com/services/…"></p>
+<p class="cta"><button type="button" class="btn" id="w-slack-save">Connect Slack</button> <button type="button" class="btn" id="w-slack-off" hidden>Disconnect</button></p></section>
 </div>
 <section class="card"><h2 id="w-pick-h">Pick servers</h2>
 <h3><label for="w-q">Search the index</label></h3>

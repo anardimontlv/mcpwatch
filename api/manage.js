@@ -1,4 +1,4 @@
-// POST /api/manage {token, action: list|add|remove|delete_account, slugs?}, or {action: "email_link", email}.
+// POST /api/manage {token, action: list|add|remove|slack|delete_account, slugs?, url?}, or {action: "email_link", email}.
 const L = require("./_lib");
 
 const LINK_SENT = { ok: true, message: "If that address has a confirmed watchlist, a new manage link is on its way." };
@@ -23,7 +23,7 @@ module.exports = L.handler(async (req, res) => {
     }
     return L.send(res, 200, LINK_SENT);
   }
-  if (!["list", "add", "remove", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
+  if (!["list", "add", "remove", "slack", "delete_account"].includes(action)) throw new L.HttpError(400, "unknown action");
   if (typeof body.token !== "string" || !L.TOKEN.test(body.token)) throw new L.HttpError(403, "invalid or expired manage link");
   await L.ensureSchema();
   if (action === "delete_account") {
@@ -43,7 +43,22 @@ module.exports = L.handler(async (req, res) => {
     const slugs = await L.cleanSlugs(body.slugs, { checkExists: false });
     if (slugs.length) await L.sql(`DELETE FROM watches WHERE user_id = $1 AND slug IN (SELECT jsonb_array_elements_text($2::jsonb))`, [user.id, slugs]);
   }
+  // Slack alerts: free for everyone during the beta, Pro and Team once billing is on. The URL is never sent back.
+  const slackAllowed = !L.billingEnabled() || user.plan !== "free";
+  let slack = Boolean(user.slack_webhook);
+  if (action === "slack") {
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    if (url) {
+      if (!L.SLACK_HOOK.test(url)) throw new L.HttpError(400, "paste a Slack incoming webhook URL (https://hooks.slack.com/services/...)");
+      if (!slackAllowed) throw new L.HttpError(402, "Slack alerts are part of Pro");
+      if (await L.limited("slack", user.id, 10)) throw new L.HttpError(429, "too many requests, try again in an hour");
+      if (!(await L.slackPost(url, "mcpwatch is connected. You will get a message here when a server you watch changes.")))
+        throw new L.HttpError(400, "Slack did not accept a test message: check the webhook URL");
+    }
+    await L.sql(`UPDATE users SET slack_webhook = $2 WHERE id = $1`, [user.id, url || null]);
+    slack = Boolean(url);
+  }
   const rows = await L.sql(`SELECT slug FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
   L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), max: limit, limit,
-    plan: user.plan, billing_enabled: L.billingEnabled() });
+    plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed });
 });

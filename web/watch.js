@@ -74,8 +74,8 @@
     }
   }
 
-  async function manage(action, slugs) {
-    const { ok, d } = await post("/api/manage", { token, action, slugs });
+  async function manage(action, slugs, extra) {
+    const { ok, d } = await post("/api/manage", { token, action, slugs, ...extra });
     if (!ok) { msg("Could not update your list: " + (d.error || "unknown error") + "."); return false; }
     if (d.deleted) {
       $("w-manage").hidden = true;
@@ -87,8 +87,25 @@
       " watched (you can watch up to " + d.max + " of the index's servers during the beta).";
     renderList(d.slugs);
     renderBilling(d);
+    renderSlack(d);
     return true;
   }
+
+  function renderSlack(d) {
+    $("w-slack").hidden = !d.slack_allowed && !d.slack;
+    $("w-slack-off").hidden = !d.slack;
+    $("w-slack-save").textContent = d.slack ? "Replace webhook" : "Connect Slack";
+    if (d.slack) $("w-slack-st").textContent = "Connected: the daily digest is also posted to your Slack channel.";
+  }
+  $("w-slack-save").addEventListener("click", async () => {
+    const b = $("w-slack-save");
+    b.disabled = true;
+    if (await manage("slack", undefined, { url: $("w-slack-url").value })) { $("w-slack-url").value = ""; msg("Slack connected: check your channel for a test message."); }
+    b.disabled = false;
+  });
+  $("w-slack-off").addEventListener("click", async () => {
+    if (await manage("slack", undefined, { url: "" })) msg("Slack disconnected.");
+  });
 
   // Paid plans: shown only when the server says billing is on. The target URL comes from our API (a Paddle page).
   function renderBilling(d) {

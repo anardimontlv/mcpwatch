@@ -69,7 +69,18 @@ async function paddleFetch(method, path, body) {
   return r.json();
 }
 
-const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, paddle: paddleFetch };
+// Slack incoming webhooks only: the host is fixed by SLACK_HOOK, so a user-supplied URL can't point us anywhere else.
+const SLACK_HOOK = /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]{4,40}\/[A-Za-z0-9_-]{4,40}\/[A-Za-z0-9_-]{8,80}$/;
+async function slackPost(url, text) {
+  if (!SLACK_HOOK.test(url)) return false;
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+      redirect: "error", signal: AbortSignal.timeout(8000) });
+    return r.ok;
+  } catch (_) { return false; } // never log the URL: it is the credential
+}
+
+const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, paddle: paddleFetch, slackPost };
 const sql = (query, params = []) =>
   deps.sql(query, params.map((p) => (p == null ? null : typeof p === "object" ? JSON.stringify(p) : String(p))));
 const sendMail = (m) => deps.sendMail(m);
@@ -103,6 +114,7 @@ function ensureSchema() {
       `CREATE TABLE IF NOT EXISTS webhook_events (event_id text PRIMARY KEY, received_at timestamptz NOT NULL DEFAULT now())`,
       `DELETE FROM webhook_events WHERE received_at < now() - interval '90 days'`,
       `CREATE INDEX IF NOT EXISTS ratelimit_k_at ON ratelimit (k, at)`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook text`, // optional Slack incoming-webhook URL (a credential)
     ]) await sql(q);
   })().catch((e) => { schema = null; throw e; });
   return schema;
@@ -134,7 +146,7 @@ function planLimit(plan) {
 
 // The user behind an unexpired token of exactly this kind (with effective plan), or undefined.
 const tokenUser = async (kind, t) => (await sql(
-  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id
+  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id, u.slack_webhook
    FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = $1 AND t.kind = $2 AND t.expires_at > now()`,
   [hash(t), kind]))[0];
 // Deletes the user behind an unexpired token of this kind; tokens and watches go with it (ON DELETE CASCADE).
@@ -261,5 +273,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };

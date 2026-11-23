@@ -92,8 +92,9 @@ function fakeSql(q, p) {
     const t = live(p[0], p[1]);
     const u = t && user((x) => x.id === t.user_id);
     return u ? [{ id: u.id, email: u.email, plan: effPlan(u), paddle_customer_id: u.paddle_customer_id || null,
-      paddle_subscription_id: u.paddle_subscription_id || null }] : [];
+      paddle_subscription_id: u.paddle_subscription_id || null, slack_webhook: u.slack_webhook || null }] : [];
   }
+  if (q.startsWith("UPDATE users SET slack_webhook = $2")) { user((x) => x.id === p[0]).slack_webhook = p[1]; return []; }
   if (q === "SELECT slug FROM watches WHERE user_id = $1") return db.watches.filter((w) => w.user_id === p[0]).map((w) => ({ slug: w.slug }));
   if (q.includes("DELETE FROM users WHERE id = (SELECT user_id FROM tokens")) {
     const t = live(p[0], p[1]);
@@ -124,6 +125,7 @@ function fakeSql(q, p) {
   throw new Error("fake sql: unexpected query: " + q.slice(0, 60));
 }
 
+let slackPosts = [], slackOk = true;
 const origError = console.error;
 test.beforeEach(() => {
   db = { users: [], watches: [], rl: [], tokens: [], events: new Set(), seq: 0, now: Date.parse("2026-11-22T10:00:00Z") };
@@ -144,6 +146,8 @@ test.beforeEach(() => {
   };
   L.deps.sql = async (q, p) => fakeSql(q, p);
   L.deps.sendMail = async (m) => { mails.push(m); return mailOk; };
+  slackPosts = []; slackOk = true;
+  L.deps.slackPost = async (url, text) => { slackPosts.push([url, text]); return L.SLACK_HOOK.test(url) && slackOk; };
   L.deps.fetchJSON = async (url) => {
     if (fetchFails) throw new Error("down");
     const sh = /\/d\/([0-9a-f]{2})\.json$/.exec(url)[1];
@@ -392,6 +396,40 @@ test("never-confirmed sign-ups are purged after 7 days; confirmed users are kept
   await L.ensureSchema();
   assert.deepEqual(db.users.map((u) => u.email).sort(), ["kept@example.com"]);
   assert.equal(db.watches.filter((w) => !db.users.some((u) => u.id === w.user_id)).length, 0); // cascade
+});
+
+const HOOK = "https://hooks.slack.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234";
+test("slack: only Slack webhook URLs, verified by a test message, never echoed back, clearable", async () => {
+  const tok = await signUp("s@example.com", [KNOWN[0]]);
+  const op = (body) => call(manage, { body: { token: tok, action: "slack", ...body } });
+  for (const url of ["https://evil.example.com/services/a/b/c", "http://hooks.slack.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234",
+    "https://hooks.slack.com.evil.com/services/T0ABC123/B0DEF456/abcdefghijKLMNOP1234", HOOK + "/../x", HOOK + "?x=1"]) {
+    assert.equal((await op({ url })).status, 400, url);
+  }
+  assert.equal(slackPosts.length, 0, "invalid URLs are never fetched");
+  slackOk = false;
+  assert.equal((await op({ url: HOOK })).status, 400, "rejected test message");
+  assert.equal(db.users[0].slack_webhook, undefined);
+  slackOk = true;
+  const r = await op({ url: HOOK });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.slack, true);
+  assert.equal(db.users[0].slack_webhook, HOOK);
+  assert.ok(!r.body.includes("hooks.slack.com"), "the webhook URL is a credential: never sent back");
+  assert.equal((await call(manage, { body: { token: tok, action: "list" } })).json.slack, true);
+  const c = await op({ url: "" });
+  assert.equal(c.json.slack, false);
+  assert.equal(db.users[0].slack_webhook, null);
+});
+
+test("slack: Pro only once billing is on", async () => {
+  billingOn();
+  const tok = await signUp("f@example.com", [KNOWN[0]]);
+  const r = await call(manage, { body: { token: tok, action: "slack", url: HOOK } });
+  assert.equal(r.status, 402);
+  assert.equal(slackPosts.length, 0);
+  db.users[0].plan = "pro"; db.users[0].plan_status = "active";
+  assert.equal((await call(manage, { body: { token: tok, action: "slack", url: HOOK } })).status, 200);
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------
