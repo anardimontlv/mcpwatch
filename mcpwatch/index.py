@@ -327,6 +327,13 @@ th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mu
 .rdet summary,.legend-why summary,.routine summary{cursor:pointer;color:var(--acc);font-size:.875rem;margin-top:6px}
 .legend-why{margin:0 0 8px}.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0;font-size:.9375rem}.why p{margin:0 0 4px}
 .tl{font-size:.875rem;margin:8px 0}.tl code{font-size:.8125rem}.routine{margin-top:16px}
+.b-lo{background:var(--sf);color:var(--mut);border-color:var(--line)}.b-ok{background:rgb(26 127 55/.1);color:#116329;border-color:rgb(26 127 55/.35)}
+@media (prefers-color-scheme:dark){.b-ok{color:#7ee2a0}}
+.khd{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}.khd h2{margin:0}
+.okline{color:#1a7f37;font-weight:600;margin:8px 0 0}.desc{margin:4px 0 8px}.acts{margin:16px 0}
+.tchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px}.sm-btn{min-height:36px;font-size:.875rem}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}.mgrid h3{margin:0 0 8px}.mgrid img{display:block;margin:0 0 8px}
+.card .rlist{margin:0}.card .rlist li.rrow:first-child{border-top:0}.card h3{font-size:.9375rem;margin:16px 0 4px}
 @media (max-width:600px){.card{padding:16px}td,th{padding:8px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}"""
 
@@ -378,42 +385,94 @@ def compact(r):
             "rv": RULES_VERSION}
 
 
-SERVER_JS = """
+SERVER_JS = r"""
 const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
-const card=t=>{const k=$('section',null,'card');k.append($('h2',t));return k};
-const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\\.html$/,'');
+const card=t=>{const k=$('section',null,'card');if(t)k.append($('h2',t));return k};
+const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\.html$/,'');
 const m=document.getElementById('m');
-if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
+// our own words per rule: [title, why it matters]
+const RU={MW001:['Plaintext secret','A credential is readable in the published config, so anyone can reuse it.'],
+MW002:['Unpinned package','Every launch runs whatever version the registry serves that day, including a compromised one.'],
+MW004:['Plain HTTP endpoint','Traffic and tokens can be read or changed in transit.'],
+MW005:['Tools listed without auth','Anyone with the URL can list and call these tools. Fine for public data, risky if the tools touch accounts.'],
+MW006:['Broad filesystem access','The server can read or change files far beyond a project folder.'],
+MW007:['Host-level container access','The container can effectively control the host machine.'],
+MW008:['Inline shell launch','Hard to audit what actually runs; a download piped into a shell runs unreviewed code.'],
+MW009:['Safety control disabled','A launch flag turns off a protection the client would otherwise apply.'],
+MW101:['Instructions aimed at the model','Tool text tells the AI what to do, for example to ignore earlier rules or read files. Agents follow tool descriptions, so this can hijack them.'],
+MW102:['Can execute commands or delete data','An agent steered by a prompt or a poisoned document could misuse these tools.'],
+MW103:['Hidden characters in tool text','Characters people can’t see but models read: a known way to hide instructions.']};
+const SEV=['critical','high','medium','low'],SC={critical:'cr',high:'hi',medium:'md',low:'lo'};
 const LBL={'intended':'Maintainer: intended behavior','fixing':'Maintainer: a fix is coming','false-positive':'Maintainer: says this is a false positive'};
+const AUTH={open:['Lists tools without auth','md'],auth:['Requires auth','ok'],down:['Endpoint not reachable','lo']};
+const cap=s=>String(s).charAt(0).toUpperCase()+String(s).slice(1);
+const badge=(t,c)=>$('span',t,'badge b-'+c);
+if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
 Promise.all([fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()),fetch('/api/claim?slug='+sl).then(r=>r.ok?r.json():{}).catch(()=>({}))]).then(([d,cl])=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
 const resp=(cl&&cl.claimed&&cl.responses)||{};
 document.title=r.t+' MCP server: security check (grade '+r.g+')';
+const out=[];
+// ---- header ----
 const gr=$('span',null,'g lg g'+r.g);gr.append($('span','Grade ','vh'),r.g);
 const tx=$('div',null,'min0');tx.append($('h1',r.t,'wrap'),$('p',r.n+' · v'+r.v+' · score '+r.s+'/100'+(r.vd?' · tools verified '+r.vd:''),'mut sm wrap'));
-const hd=$('div',null,'sh');hd.append(gr,tx);const dl=$('a','dispute any finding');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
-const hw=$('a','How grading works');hw.href='HOWURL';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. Maintainers can ','mut sm');nt.append(dl,'. ',hw);
-const top=[hd,nt];
-if(cl&&cl.claimed){const cp=$('p',null,'mut sm wrap');cp.append($('span','Claimed','tag'),' by the maintainers of github.com/'+cl.repo+' (verified '+String(cl.verified_at).slice(0,10)+'). Their responses use fixed labels; grades are unchanged.');top.push(cp)}
-top.push($('p',r.d,'wrap'));
-const wp=$('p'),wa=$('a','Watch this server','btn');wa.href='/watch?add='+sl;wp.append(wa);top.push(wp);
-if(/^https:\\/\\//.test(r.r)){const p=$('p','Source: ','wrap'),a=$('a',r.r);a.href=r.r;a.rel='nofollow';p.append(a);top.push(p)}
-const k=card('Findings');
-if(!r.f.length)k.append($('p','No issues found by current checks.','mut'));else{
-const t=$('table'),hr=$('tr'),th=$('thead'),tb=$('tbody');['Severity','Rule','Detail'].forEach(x=>hr.append($('th',x)));th.append(hr);
-r.f.forEach(f=>{const tr=$('tr'),s=$('td'),dt=$('td',f[2],'wrap');s.append($('span',String(f[0]).charAt(0).toUpperCase()+String(f[0]).slice(1),'sev'));
-if(LBL[resp[f[1]]])dt.append($('br'),$('span',LBL[resp[f[1]]],'tag'));tr.append(s,$('td',f[1]),dt);tb.append(tr)});
-t.append(th,tb);k.append(t)}
-const c=card('What was checked'),ul=$('ul');r.o.forEach(o=>ul.append($('li',o,'wrap')));
-c.append(ul,$('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
-const b=card('Maintainer? Add the badge');const d2=$('a','Dispute this grade');d2.href=dl.href;d2.rel='nofollow';
-const dp=$('p','Think a finding is wrong? ');dp.append(d2,'.');b.append(dp,$('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
-if(/^https:\\/\\/github\\.com\\//.test(r.r)){const cd=$('details'),cs=$('summary','Claim this page and respond to findings');
-const ex='claim: '+sl+'\\n'+(r.f.length?r.f.map(f=>'# '+f[1]+': intended | fixing | false-positive').join('\\n'):'');
-const vb=$('button','Verify my claim','btn'),vm=$('p',null,'sm wrap');vb.type='button';
-vb.addEventListener('click',async()=>{vb.disabled=true;try{const q=await fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:sl})});const j=await q.json();
-vm.textContent=q.ok?'Verified. Reload the page to see your responses.':'Not verified: '+(j.error||'unknown error')+'.'}catch(e){vm.textContent='Network error, try again.'}vb.disabled=false});
-cd.append(cs,$('p','Prove you maintain the repository the MCP registry lists for this server: commit a file named .mcpwatch to its default branch, with this line (and optionally a response per finding, from the fixed list):','sm wrap'),$('pre',ex),vb,vm);b.append(cd)}
-m.replaceChildren(...top,k,c,b)})
+const hd=$('div',null,'sh');hd.append(gr,tx);out.push(hd);
+const st=$('div',null,'rhd');const au=AUTH[r.a]||['Package-based: static checks only','lo'];st.append(badge(au[0],au[1]));
+if((r.k||[]).length)st.append(badge(r.k.length+' public tool'+(r.k.length===1?'':'s'),'lo'));
+if(cl&&cl.claimed)st.append(badge('Claimed by maintainers','ok'));
+out.push(st);
+const act=$('div',null,'cta acts');const wa=$('a','Watch this server','btn pri');wa.href='/watch?add='+sl;act.append(wa);
+if(/^https:\/\//.test(r.r)){const a=$('a','Source code','btn');a.href=r.r;a.rel='nofollow';act.append(a)}
+const dl=$('a','Dispute a finding','btn');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';act.append(dl);out.push(act);
+if(r.d){const ds=$('p',null,'desc wrap');ds.append($('span','From the registry: ','mut'),String(r.d).slice(0,600));out.push(ds)}
+if(cl&&cl.claimed){out.push($('p','Claimed by the maintainers of github.com/'+cl.repo+' (verified '+String(cl.verified_at).slice(0,10)+'). Their responses use fixed labels; grades are unchanged.','mut sm wrap'))}
+// ---- findings, grouped by rule ----
+const k=card(null),kh=$('div',null,'khd');kh.append($('h2','Findings'));
+if(!r.f.length){k.append(kh,$('p','✓ No issues found by current checks.','okline'))}else{
+ const groups=new Map();r.f.forEach(f=>{const g=groups.get(f[1])||{rule:f[1],sev:f[0],items:[]};g.items.push(f[2]);if(SEV.indexOf(f[0])<SEV.indexOf(g.sev))g.sev=f[0];groups.set(f[1],g)});
+ const gs=[...groups.values()].sort((a,b)=>SEV.indexOf(a.sev)-SEV.indexOf(b.sev));
+ const cnt={};gs.forEach(g=>{cnt[g.sev]=(cnt[g.sev]||0)+1});
+ const sm=$('div',null,'rhd');SEV.filter(s=>cnt[s]).forEach(s=>sm.append(badge(cnt[s]+' '+s,SC[s])));kh.append(sm);k.append(kh);
+ const ul=$('ul',null,'feed rlist');
+ gs.forEach(g=>{const li=$('li',null,'rrow'),h=$('div',null,'rhd'),ru=RU[g.rule]||[g.rule,''];
+  h.append(badge(cap(g.sev),SC[g.sev]||'lo'),$('strong',ru[0]),$('span',g.rule,'mut sm'));
+  if(g.items.length>1)h.append($('span',g.items.length+' tools','mut sm'));
+  if(LBL[resp[g.rule]])h.append(badge(LBL[resp[g.rule]],'ok'));
+  li.append(h);if(ru[1])li.append($('p',ru[1],'rsum mut sm'));
+  const names=g.items.map(x=>{const mm=/^tool '([^']{1,120})'/.exec(x);return mm?mm[1]:null});
+  if(names.every(Boolean)&&g.items.length>1){const p=$('p',null,'tl');p.append($('strong','Tools: '),$('code',names.join(', '),'wrap'));const dd=$('details',null,'rdet');dd.append($('summary','Show affected tools'),p);li.append(dd)}
+  else{const dd=$('details',null,'rdet');dd.append($('summary','Details'));g.items.forEach(x=>dd.append($('p',x,'tl wrap')));li.append(dd)}
+  ul.append(li)});
+ k.append(ul)}
+out.push(k);
+// ---- what was checked ----
+const c=card('What was checked'),eu=$('ul',null,'feed rlist');
+const NS=[[/: answers without auth$/,'Answers without auth','md'],[/: requires auth$/,'Requires auth','ok'],[/: not reachable$/,'Not reachable','lo'],[/: not probed \(owner opt-out\)$/,'Not probed (owner opt-out)','lo']];
+(r.o||[]).forEach(o=>{const li=$('li',null,'rrow'),h=$('div',null,'rhd'),hit=NS.find(n=>n[0].test(o));
+ if(hit){h.append($('code',o.replace(hit[0],''),'wrap'),badge(hit[1],hit[2]))}else h.append($('span',o,'wrap'));li.append(h);eu.append(li)});
+if(!(r.o||[]).length)eu.append($('li','No remote endpoint: this server runs locally from a package, so only its published config was checked.','rrow mut'));
+c.append(eu);
+const tl=r.k||[];
+if(tl.length){const box=$('div',null,'tchips');tl.forEach((t,i)=>{const s=$('code',t,'tag');if(i>=24)s.hidden=true;box.append(s)});
+ c.append($('h3','Public tools ('+tl.length+')'),box);
+ if(tl.length>24){const b=$('button','Show all '+tl.length+' tools','btn sm-btn');b.type='button';b.addEventListener('click',()=>{box.querySelectorAll('[hidden]').forEach(x=>x.hidden=false);b.remove()});c.append(b)}}
+else c.append($('p','Tools: not listed publicly.','mut sm'));
+out.push(c);
+// ---- maintainer ----
+const b=card('For maintainers'),bg=$('div',null,'mgrid'),b1=$('div'),b2=$('div');
+const im=$('img');im.src='/badge/'+sl+'.svg';im.alt='mcpwatch grade badge';im.height=20;
+b1.append($('h3','Add the badge'),im,$('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
+b2.append($('h3','Respond to findings'));
+if(/^https:\/\/github\.com\//.test(r.r)){
+ const ex='claim: '+sl+'\n'+(r.f.length?[...new Set(r.f.map(f=>f[1]))].map(x=>'# '+x+': intended | fixing | false-positive').join('\n'):'');
+ const vb=$('button','Verify my claim','btn'),vm=$('p',null,'sm wrap');vb.type='button';
+ vb.addEventListener('click',async()=>{vb.disabled=true;try{const q=await fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:sl})});const j=await q.json();
+  vm.textContent=q.ok?'Verified. Reload the page to see your responses.':'Not verified: '+(j.error||'unknown error')+'.'}catch(e){vm.textContent='Network error, try again.'}vb.disabled=false});
+ b2.append($('p','Commit a file named .mcpwatch to the default branch of the repository the MCP registry lists, then verify. Responses use fixed labels; grades don’t change.','sm mut'),$('pre',ex),vb,vm)}
+else{const p=$('p','This server’s registry entry lists no GitHub repository. ','sm mut');const a=$('a','Open a dispute');a.href=dl.href;a.rel='nofollow';p.append(a,' instead.');b2.append(p)}
+bg.append(b1,b2);b.append(bg);
+const hw=$('a','How grading works');hw.href='HOWURL';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. ','mut sm');nt.append(hw,'.');
+out.push(b,nt);
+m.replaceChildren(...out)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
 """
 
@@ -548,19 +607,16 @@ def write_site(results, out, changes=None):
         notes = "".join(f"<li class='wrap'>{esc(n)}</li>" for n in r["notes"])
         tools = ", ".join(esc(t) for t in r["tools"][:30]) or "not listed publicly"
         md = f"[![mcpwatch]({BASE}/badge/{sl}.svg)]({BASE}/s/{sl})"
-        body = (f"<p class='crumb'><a href='/'>← All servers</a></p><div class='sh'>{g(esc(r['grade']), ' lg')}<div class='min0'>"
+        rules = {}
+        for x in r["findings"]:
+            rules.setdefault(x["rule"], x["severity"])
+        summary = "".join(f"<li>{sev(v)} {esc(k)}</li>" for k, v in rules.items())
+        body = (f"<p class='crumb'><a href='/'>← All servers</a></p><div id='m'><div class='sh'>{g(esc(r['grade']), ' lg')}<div class='min0'>"
                 f"<h1 class='wrap'>{esc(r['title'])}</h1><p class='mut sm wrap'>{esc(r['name'])} · v{esc(r['version'])} · "
                 f"score {esc(str(r['score']))}/100 · checked {now}</p></div></div>"
-                f"<p class='mut sm'>Automated, read-only signal from public data, not an audit or an accusation. Maintainers can "
-                f"<a rel='nofollow' href='{esc(DISPUTE + urllib.request.quote(r['name']))}'>dispute any finding</a>. <a href='{HOW}'>How grading works</a></p>"
                 f"<p class='wrap'>{esc(r['description'][:600])}</p>"
-                f"<p><a class='btn' href='/watch?add={esc(sl)}'>Watch this server</a></p>"
-                + (f"<p class='wrap'>Source: <a rel='nofollow' href='{esc(r['repo'])}'>{esc(r['repo'])}</a></p>" if r['repo'].startswith("https://") else "")
-                + f"<section class='card'><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr></thead><tbody>{rows}</tbody></table></section>"
-                f"<section class='card'><h2>What was checked</h2><ul>{notes}</ul><p class='wrap'>Public tools: {tools}</p></section>"
-                f"<section class='card'><h2>Maintainer? Add the badge</h2><p>Grades refresh daily. "
-                f"Think a finding is wrong? <a rel='nofollow' href='{esc(DISPUTE + urllib.request.quote(r['name']))}'>Dispute this grade</a>.</p>"
-                f"<pre>{esc(md)}</pre></section>")
+                f"<section class='card'><h2>Findings</h2><ul>{summary}</ul></section></div>"
+                f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE).replace('HOWURL', HOW)}</script>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"{r['title']} MCP server: security check (grade {r['grade']})", body,
                           f"Automated, read-only security check of the {r['title']} MCP server: grade, findings, auth, tools. Updated daily."))
