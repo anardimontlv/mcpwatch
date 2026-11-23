@@ -59,6 +59,28 @@ jobs:
         with: { mode: check, config: .mcp.json, lock: mcpwatch.lock }
 ```
 
+## See exactly what changed, and block it at runtime
+
+The public index stores only fingerprints. For servers you run yourself (or private ones), pin the tool text too:
+
+```
+mcpwatch lock .mcp.json --live    # launches each stdio server / calls each remote one and keeps the approved tool text
+mcpwatch check .mcp.json --live   # fails on drift and prints a diff of the changed description or schema
+```
+
+Hidden characters are shown as `\u200b`-style escapes, so invisible instructions become visible in the diff.
+
+`mcpwatch guard` sits in front of a stdio server and only lets your agent see the tools you approved. Changed or new
+tools are removed from `tools/list`, and calls to them are refused before they reach the server:
+
+```json
+{ "mcpServers": { "github": {
+    "command": "mcpwatch",
+    "args": ["guard", "--name", "github", "--lock", "/path/to/mcpwatch.lock", "--", "npx", "-y", "@modelcontextprotocol/server-github"] } } }
+```
+
+Without an approved entry for `--name` the guard refuses to start. Re-run `mcpwatch lock --live` after you review a change.
+
 ## What `check` treats as drift
 
 | Change | Severity |

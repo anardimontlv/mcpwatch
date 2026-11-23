@@ -4,6 +4,8 @@
   python3 -m mcpwatch.watch lock  CONFIG.json [--lock mcpwatch.lock]   # pin today's tools
   python3 -m mcpwatch.watch check CONFIG.json [--lock mcpwatch.lock]   # exit 1 if anything drifted
   MCPWATCH_REPORT_KEY=... python3 -m mcpwatch.watch report CONFIG.json [--repo owner/name]   # Team org view + policy
+  mcpwatch lock --live / check --live   # also pin the tool text itself; check prints a diff of what changed
+  mcpwatch guard --name NAME -- <server command>   # stdio proxy: your agent only sees approved tools
 
 Fingerprints come from the public daily index (one hash per tool over its description and input
 schema), so nothing is executed and nothing about your config is uploaded: the CLI only downloads
@@ -245,11 +247,17 @@ def send_report(repo, payload, key):
 
 def main(argv=None):
     from mcpwatch.scan import servers_of
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["guard"]:
+        from mcpwatch.guard import main as guard_main
+        return guard_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", choices=["lock", "check", "report"])
     ap.add_argument("config")
     ap.add_argument("--lock", default="mcpwatch.lock")
     ap.add_argument("--max-stale", type=int, default=3, help="check: fail if pinned tools were last verified more than N days ago")
+    ap.add_argument("--live", action="store_true", help="lock/check: also fetch each server's tools directly (launches stdio servers) "
+                    "and keep the approved text, so check shows exactly what changed")
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""), help="report: owner/name (default: $GITHUB_REPOSITORY)")
     a = ap.parse_args(argv)
     try:
@@ -283,10 +291,21 @@ def main(argv=None):
         print(f"mcpwatch: reported {res.get('servers', 0)} server(s) for {a.repo}; {n} policy violation(s). Org view: {res.get('dashboard', BASE + '/watch')}")
         return 1 if n else 0
     if a.cmd == "lock":
+        if a.live:
+            from mcpwatch.live import list_tools, snapshot_tools
+            print("mcpwatch: --live launches each stdio server in your config and calls each remote one to read its tools", file=sys.stderr)
+            for name, cfg in servers.items():
+                if not isinstance(cfg, dict):
+                    continue
+                try:
+                    now.setdefault(name, {"slug": None})["live"] = snapshot_tools(list_tools(cfg))
+                except Exception as e:
+                    print(f"  live: could not read tools from {name}: {type(e).__name__}: {str(e)[:120]}", file=sys.stderr)
         with open(a.lock, "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "servers": now}, fh, indent=2, sort_keys=True)
         pinned = sum(1 for r in now.values() if r.get("h"))
-        print(f"mcpwatch: locked {len(now)} server(s) to {a.lock}; {pinned} with tool fingerprints")
+        live = sum(1 for r in now.values() if r.get("live") is not None)
+        print(f"mcpwatch: locked {len(now)} server(s) to {a.lock}; {pinned} with index fingerprints" + (f", {live} with live tool text" if a.live else ""))
         for n in unindexed:
             why = now[n].get("ambiguous") or "not in the public index (private or local server)"
             print(f"  not pinned: {n}: {why}")
@@ -298,8 +317,27 @@ def main(argv=None):
         print(f"mcpwatch: cannot read lock file ({e}); run `lock` first", file=sys.stderr)
         return 2
     items = drift_items(locked, now, a.max_stale)
+    diffs = {}
+    if a.live:
+        from mcpwatch.live import list_tools, snapshot_tools, live_diff
+        for name, rec in locked.items():
+            if rec.get("live") is None:
+                continue
+            cfg = servers.get(name)
+            try:
+                if not isinstance(cfg, dict):
+                    raise ValueError("server is no longer in the config")
+                found = live_diff(rec["live"], snapshot_tools(list_tools(cfg)))
+            except Exception as e:  # fail closed: an unreadable server is not a clean one
+                items.append({"server": name, "sev": "high", "kind": "live_check_failed", "detail": f"{type(e).__name__}: {str(e)[:120]}"})
+                continue
+            for sev, kind, tool, lines in found:
+                items.append({"server": name, "sev": sev, "kind": kind, "detail": tool})
+                diffs[(name, tool)] = lines
     for i in items:
         print(f"  [{i['sev'].upper():8}] {i['server']}: {i['kind']} {i['detail']}")
+        for l in diffs.get((i["server"], i["detail"]), [])[:60]:
+            print(f"      {l}")
     drift = any(i["sev"] in ("high", "medium") for i in items)
     print(f"mcpwatch: {'DRIFT DETECTED' if drift else 'no drift'} across {len(now)} server(s)")
     return 1 if drift else 0
