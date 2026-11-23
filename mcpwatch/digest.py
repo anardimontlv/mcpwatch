@@ -11,6 +11,7 @@ message and exits 0. Needs DATABASE_URL (Neon) and RESEND_API_KEY; without them 
 """
 import argparse, hashlib, json, os, secrets, sys, urllib.parse, urllib.request
 import re
+from mcpwatch.explain import explain
 from datetime import date, datetime, timedelta, timezone
 
 SITE = "https://www.mcpwatch.io"
@@ -58,6 +59,8 @@ def slack_text(date, items, since=None):
         line = f"• <{SITE}/s/{it['slug']}|{esc(it.get('name', it['slug']))}>: {n} change{'s' if n != 1 else ''}"
         if it.get("notable"):
             line += " — *notable:* " + esc("; ".join(it["notable"]))
+            for ex in filter(None, {explain(w)["do"] if explain(w) else None for w in it["notable"]}):
+                line += "\n   ↳ " + esc(ex)
         lines.append(line)
     if len(items) > 20:
         lines.append(f"…and {len(items) - 20} more. Full list in your email digest.")
@@ -122,6 +125,10 @@ def render(date, items, unsub_url, since=None):
         lines.append(f"  {SITE}/s/{it['slug']}")
         for why in it.get("notable") or []:
             lines.append(f"  Notable: {why}")
+            ex = explain(why)
+            if ex:
+                lines.append(f"    Why it matters: {ex['why']}")
+                lines.append(f"    What to do: {ex['do']}")
         for c in it.get("changes", []):
             lines.append(f"  - {str(c.get('kind', '')).replace('_', ' ')}: {c.get('detail', '')} ({c.get('sev', '')})")
         lines.append("")

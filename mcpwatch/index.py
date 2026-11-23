@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib, http.client, ipaddress, socket, threading
 from urllib.parse import urlsplit
 from mcpwatch.scan import scan_server, scan_tools, score, badge, safe_url, is_secret_literal, RULES_VERSION
+from mcpwatch.explain import EXPLAIN
 from mcpwatch.watch import fingerprints, registry_keys, shard2, diff
 from mcpwatch.webscan import write_scan_assets
 
@@ -399,8 +400,11 @@ const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textConte
 const box=document.getElementById('c');
 const row=it=>{const li=$('li'),a=$('a',it.name,'wrap'),cs=$('div',null,'chg');a.href='/s/'+it.slug;
 const nb=it.notable||[];nb.forEach(w=>cs.append($('span',w,'tag')));
+const ex=[...new Set(nb.map(w=>String(w).split(' (')[0]))].map(k=>EX[k]).filter(Boolean);
 const covered=k=>(k==='auth_dropped'&&nb.some(w=>w.includes('credentials')))||(k==='grade_changed'&&nb.some(w=>w.startsWith('grade dropped')));
-it.changes.filter(c=>!covered(c.kind)).forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);return li};
+it.changes.filter(c=>!covered(c.kind)).forEach(c=>cs.append($('span',c.kind.replace(/_/g,' ')+' '+c.detail,'tag')));li.append(a,cs);
+if(ex.length){const d=$('details',null,'why');d.append($('summary','Why it matters'));ex.forEach(e=>{d.append($('p',e.why),$('p','What to do: '+e.do,'mut'))});li.append(d)}
+return li};
 fetch('/changes.json').then(r=>r.json()).then(days=>{box.replaceChildren();
 if(!days.length){box.append($('p','No history yet: the radar records its first baseline today. Changes appear from tomorrow.','card'));return}
 days.forEach(d=>{try{const s=$('section'),hot=d.items.filter(i=>i.notable&&i.notable.length),rest=d.items.filter(i=>!(i.notable&&i.notable.length));
@@ -481,7 +485,8 @@ def write_site(results, out, changes=None):
         fh.write(page("MCP rug-pull radar: tool changes across every public MCP server",
                       "<div class='hero'><span class='eye'>Updated daily</span><h1>Rug-pull radar</h1><p class='lede'>Every remote MCP server that lists its tools publicly is fingerprinted daily. "
                       "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p></div>"
-                      "<div id='c'><p class='mut'>Loading…</p></div>" f"<script>{CHANGES_JS}</script>",
+                      "<div id='c'><p class='mut'>Loading…</p></div>"
+                      "<script>const EX=" + json.dumps(EXPLAIN).replace("</", "<\\/") + ";" + CHANGES_JS + "</script>",
                       "Daily feed of MCP tool changes across every server in the official registry."))
 
     # static, crawlable pages only where there is something to say (grade below A); /s/<slug> covers the rest

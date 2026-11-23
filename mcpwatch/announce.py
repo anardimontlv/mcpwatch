@@ -9,6 +9,7 @@ Each channel is skipped unless its secrets are set, and a failure on one channel
 Posts are idempotent per day via a marker file in the history branch checkout (--state).
 """
 import argparse, datetime, json, os, sys, urllib.error, urllib.request
+from mcpwatch.explain import EXPLAIN
 
 SITE = "https://www.mcpwatch.io"
 UA = "mcpwatch-announce/0.1 (+https://www.mcpwatch.io)"
@@ -108,6 +109,9 @@ def weekly_article(stats, changes):
                 reasons[k] = reasons.get(k, 0) + 1
     rows = "\n".join(f"| {label} | {reasons.get(key, 0):,} |" for key, label in LABELS)
     first, last = week[-1].get("date"), week[0].get("date")
+    meaning = "".join(f"**{label[0].upper() + label[1:]}.** {EXPLAIN[key]['why']} *What to do:* {EXPLAIN[key]['do']}\n\n"
+                      for key, label in LABELS if reasons.get(key) and key in EXPLAIN)
+    meaning = "## What these mean\n\n" + meaning if meaning else ""
     body = f"""Automated weekly summary from the [mcpwatch rug-pull radar]({SITE}/changes), {first} to {last}.
 
 mcpwatch checks every server in the official MCP registry daily ({stats.get('servers', 0):,} servers this week) and fingerprints the tools of every remote server it can reach without credentials ({stats.get('open', 0):,}). When a tool's description or input schema changes, it shows up on the radar.
@@ -120,7 +124,7 @@ mcpwatch checks every server in the official MCP registry daily ({stats.get('ser
 |---|---|
 {rows}
 
-Most changes are routine (reworded descriptions, new features). Notable ones are changes that affect what your agent can do or who can call a server. Server-level details, with a dispute link for maintainers, are on [the radar]({SITE}/changes).
+{meaning}Most changes are routine (reworded descriptions, new features). Notable ones are changes that affect what your agent can do or who can call a server. Server-level details, with a dispute link for maintainers, are on [the radar]({SITE}/changes).
 
 ## What to do
 
