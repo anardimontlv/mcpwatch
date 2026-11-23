@@ -80,7 +80,16 @@ async function slackPost(url, text) {
   } catch (_) { return false; } // never log the URL: it is the credential
 }
 
-const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, paddle: paddleFetch, slackPost };
+// Small public text file (a maintainer's .mcpwatch): null on 404, size-capped, no redirects.
+async function fetchText(url, max) {
+  const r = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(8000) });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (Number(r.headers.get("content-length") || 0) > max) return "";
+  return (await r.text()).slice(0, max);
+}
+
+const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, fetchText, paddle: paddleFetch, slackPost };
 const sql = (query, params = []) =>
   deps.sql(query, params.map((p) => (p == null ? null : typeof p === "object" ? JSON.stringify(p) : String(p))));
 const sendMail = (m) => deps.sendMail(m);
@@ -124,6 +133,9 @@ function ensureSchema() {
       `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tokens_kind_check' AND pg_get_constraintdef(oid) LIKE '%report%') THEN
         ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_kind_check, ADD CONSTRAINT tokens_kind_check CHECK (kind IN ('manage', 'unsub', 'report')); END IF; END $$`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS policy jsonb`,
+      // maintainer claims: proven by a .mcpwatch file in the registry-listed GitHub repo; responses are fixed labels
+      `CREATE TABLE IF NOT EXISTS maintainer_claims (slug text PRIMARY KEY, repo text NOT NULL, responses jsonb NOT NULL,
+        verified_at timestamptz NOT NULL DEFAULT now())`,
       `CREATE TABLE IF NOT EXISTS repo_reports (user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE, repo text NOT NULL,
         reported_at timestamptz NOT NULL DEFAULT now(), servers jsonb NOT NULL, violations jsonb NOT NULL, PRIMARY KEY (user_id, repo))`,
     ]) await sql(q);

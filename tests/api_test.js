@@ -9,6 +9,7 @@ const confirm = require(path.join(__dirname, "..", "api", "confirm"));
 const manage = require(path.join(__dirname, "..", "api", "manage"));
 const report = require(path.join(__dirname, "..", "api", "report"));
 const lookup = require(path.join(__dirname, "..", "api", "v1", "lookup"));
+const claim = require(path.join(__dirname, "..", "api", "claim"));
 const unsubscribe = require(path.join(__dirname, "..", "api", "unsubscribe"));
 const checkout = require(path.join(__dirname, "..", "api", "billing", "checkout"));
 const portal = require(path.join(__dirname, "..", "api", "billing", "portal"));
@@ -121,6 +122,13 @@ function fakeSql(q, p) {
   }
   if (q.startsWith("SELECT repo, reported_at, servers, violations FROM repo_reports")) return (db.repos || []).filter((r) => r.user_id === p[0]);
   if (q.startsWith("DELETE FROM repo_reports")) { db.repos = (db.repos || []).filter((r) => !(r.user_id === p[0] && r.repo === p[1])); return []; }
+  if (q.startsWith("SELECT repo, responses, verified_at FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
+  if (q.startsWith("DELETE FROM maintainer_claims")) { db.claims = (db.claims || []).filter((c) => c.slug !== p[0]); return []; }
+  if (q.startsWith("INSERT INTO maintainer_claims")) {
+    db.claims = (db.claims || []).filter((c) => c.slug !== p[0]);
+    db.claims.push({ slug: p[0], repo: p[1], responses: p[2], verified_at: "2026-11-23 10:00:00+00" });
+    return [];
+  }
   if (q === "SELECT email FROM users WHERE id = $1") return db.users.filter((x) => x.id === p[0]).map((x) => ({ email: x.email }));
   if (q.includes("INSERT INTO tokens")) {
     const [uid, kind, h, ttl] = p;
@@ -583,6 +591,33 @@ test("lookup API: by url, package and id; default-deny output; 404/409; rate lim
   const pre = await get(lookup, "/api/v1/lookup?id=" + id, {}, "OPTIONS");
   assert.equal(pre.status, 204);
   assert.equal(pre.headers["access-control-allow-headers"], "Authorization");
+});
+
+test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels for current findings; impostors add nothing", async () => {
+  const id = "io-github-acme-srv-0a1b2c3d";
+  let file = null, fetched = [];
+  L.deps.fetchJSON = async () => ({ [id]: { n: "io.github.acme/srv", r: "https://github.com/acme/srv.git", f: [["low", "MW005", "x"], ["medium", "MW002", "y"]] },
+    "io-gitlab-x-0a1b2c3d": { r: "https://gitlab.com/x/y", f: [] } });
+  L.deps.fetchText = async (u) => { fetched.push(u); return file; };
+  const post = (body) => call(claim, { url: "/api/claim", body });
+  assert.equal((await post({ slug: id })).status, 404, "no file yet");
+  assert.deepEqual(fetched, ["https://raw.githubusercontent.com/acme/srv/HEAD/.mcpwatch"]);
+  file = `# mcpwatch claim\nclaim: ${id}\nMW005: intended\nMW002: fixing\nMW001: false-positive\nMW005b: intended\nMW002: <script>alert(1)</script>\nnote: free text is ignored`;
+  const ok = await post({ slug: id, responses: { MW002: "false-positive" } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.json.responses, { MW005: "intended", MW002: "fixing" }, "fixed labels, current findings only, nothing from the request body");
+  const g = await get(claim, "/api/claim?slug=" + id);
+  assert.equal(g.json.claimed, true);
+  assert.equal(g.json.repo, "acme/srv");
+  assert.match(g.headers["cache-control"], /s-maxage/);
+  file = "claim: some-other-server-0a1b2c3d";
+  assert.equal((await post({ slug: id })).status, 404);
+  assert.equal((await get(claim, "/api/claim?slug=" + id)).json.claimed, false, "claim removed when the file stops listing it");
+  assert.equal((await post({ slug: "io-gitlab-x-0a1b2c3d" })).status, 400, "only GitHub repos from the registry");
+  assert.equal((await post({ slug: "../../x" })).status, 400);
+  assert.equal(claim.githubRepo("https://github.com/a/../"), null);
+  assert.equal(claim.githubRepo("https://github.com.evil.com/a/b"), null);
+  assert.equal(claim.githubRepo("https://github.com/acme/srv/tree/main/pkg"), "acme/srv");
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------

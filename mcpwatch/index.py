@@ -373,24 +373,35 @@ const card=t=>{const k=$('section',null,'card');k.append($('h2',t));return k};
 const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\\.html$/,'');
 const m=document.getElementById('m');
 if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
-fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()).then(d=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
+const LBL={'intended':'Maintainer: intended behavior','fixing':'Maintainer: a fix is coming','false-positive':'Maintainer: says this is a false positive'};
+Promise.all([fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()),fetch('/api/claim?slug='+sl).then(r=>r.ok?r.json():{}).catch(()=>({}))]).then(([d,cl])=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
+const resp=(cl&&cl.claimed&&cl.responses)||{};
 document.title=r.t+' MCP server: security check (grade '+r.g+')';
 const gr=$('span',null,'g lg g'+r.g);gr.append($('span','Grade ','vh'),r.g);
 const tx=$('div',null,'min0');tx.append($('h1',r.t,'wrap'),$('p',r.n+' · v'+r.v+' · score '+r.s+'/100'+(r.vd?' · tools verified '+r.vd:''),'mut sm wrap'));
 const hd=$('div',null,'sh');hd.append(gr,tx);const dl=$('a','dispute any finding');dl.href='DISPUTE'+encodeURIComponent(r.n);dl.rel='nofollow';
 const hw=$('a','How grading works');hw.href='HOWURL';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. Maintainers can ','mut sm');nt.append(dl,'. ',hw);
-const top=[hd,nt,$('p',r.d,'wrap')];
+const top=[hd,nt];
+if(cl&&cl.claimed){const cp=$('p',null,'mut sm wrap');cp.append($('span','Claimed','tag'),' by the maintainers of github.com/'+cl.repo+' (verified '+String(cl.verified_at).slice(0,10)+'). Their responses use fixed labels; grades are unchanged.');top.push(cp)}
+top.push($('p',r.d,'wrap'));
 const wp=$('p'),wa=$('a','Watch this server','btn');wa.href='/watch?add='+sl;wp.append(wa);top.push(wp);
 if(/^https:\\/\\//.test(r.r)){const p=$('p','Source: ','wrap'),a=$('a',r.r);a.href=r.r;a.rel='nofollow';p.append(a);top.push(p)}
 const k=card('Findings');
 if(!r.f.length)k.append($('p','No issues found by current checks.','mut'));else{
 const t=$('table'),hr=$('tr'),th=$('thead'),tb=$('tbody');['Severity','Rule','Detail'].forEach(x=>hr.append($('th',x)));th.append(hr);
-r.f.forEach(f=>{const tr=$('tr'),s=$('td');s.append($('span',String(f[0]).charAt(0).toUpperCase()+String(f[0]).slice(1),'sev'));tr.append(s,$('td',f[1]),$('td',f[2],'wrap'));tb.append(tr)});
+r.f.forEach(f=>{const tr=$('tr'),s=$('td'),dt=$('td',f[2],'wrap');s.append($('span',String(f[0]).charAt(0).toUpperCase()+String(f[0]).slice(1),'sev'));
+if(LBL[resp[f[1]]])dt.append($('br'),$('span',LBL[resp[f[1]]],'tag'));tr.append(s,$('td',f[1]),dt);tb.append(tr)});
 t.append(th,tb);k.append(t)}
 const c=card('What was checked'),ul=$('ul');r.o.forEach(o=>ul.append($('li',o,'wrap')));
 c.append(ul,$('p','Public tools: '+(r.k.join(', ')||'not listed publicly'),'wrap'));
 const b=card('Maintainer? Add the badge');const d2=$('a','Dispute this grade');d2.href=dl.href;d2.rel='nofollow';
 const dp=$('p','Think a finding is wrong? ');dp.append(d2,'.');b.append(dp,$('pre','[![mcpwatch](BASE/badge/'+sl+'.svg)](BASE/s/'+sl+')'));
+if(/^https:\\/\\/github\\.com\\//.test(r.r)){const cd=$('details'),cs=$('summary','Claim this page and respond to findings');
+const ex='claim: '+sl+'\\n'+(r.f.length?r.f.map(f=>'# '+f[1]+': intended | fixing | false-positive').join('\\n'):'');
+const vb=$('button','Verify my claim','btn'),vm=$('p',null,'sm wrap');vb.type='button';
+vb.addEventListener('click',async()=>{vb.disabled=true;try{const q=await fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:sl})});const j=await q.json();
+vm.textContent=q.ok?'Verified. Reload the page to see your responses.':'Not verified: '+(j.error||'unknown error')+'.'}catch(e){vm.textContent='Network error, try again.'}vb.disabled=false});
+cd.append(cs,$('p','Prove you maintain the repository the MCP registry lists for this server: commit a file named .mcpwatch to its default branch, with this line (and optionally a response per finding, from the fixed list):','sm wrap'),$('pre',ex),vb,vm);b.append(cd)}
 m.replaceChildren(...top,k,c,b)})
 .catch(()=>m.replaceChildren($('p','Could not load data.')))}
 """
