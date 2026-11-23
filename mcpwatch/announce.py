@@ -105,7 +105,7 @@ def post_mastodon(text, key):
     return "posted"
 
 
-def weekly_article(stats, changes):
+def weekly_article(stats, changes, changelog=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")):
     week = changes[:7]
     if not week:
         return None
@@ -118,6 +118,9 @@ def weekly_article(stats, changes):
                 reasons[k] = reasons.get(k, 0) + 1
     rows = "\n".join(f"| {label} | {reasons.get(key, 0):,} |" for key, label in LABELS)
     first, last = week[-1].get("date"), week[0].get("date")
+    shipped = [(v, t) for v, d, t in changelog_releases(changelog) if d and first and last and first <= d <= last]
+    shipped_md = ("## What shipped in mcpwatch this week\n\n" + "".join(f"- **{v}**: {t}\n" for v, t in shipped)
+                  + "\nUpgrade with `pipx install -U mcpwatch-io`.\n\n") if shipped else ""
     meaning = "".join(f"**{label[0].upper() + label[1:]}.** {EXPLAIN[key]['why']} *What to do:* {EXPLAIN[key]['do']}\n\n"
                       for key, label in LABELS if reasons.get(key) and key in EXPLAIN)
     meaning = "## What these mean\n\n" + meaning if meaning else ""
@@ -135,7 +138,7 @@ mcpwatch checks every server in the official MCP registry daily ({stats.get('ser
 
 {meaning}Most changes are routine (reworded descriptions, new features). Notable ones are changes that affect what your agent can do or who can call a server. Server-level details, with a dispute link for maintainers, are on [the radar]({SITE}/changes).
 
-## What to do
+{shipped_md}## What to do
 
 - Pin the tools you trust: `pipx install mcpwatch-io && mcpwatch lock .mcp.json`, then run `mcpwatch check` in CI ([GitHub Action](https://github.com/marketplace/actions/mcpwatch-mcp-security-check)).
 - Get an email when a server you depend on changes: [free beta]({SITE}/watch).
@@ -155,17 +158,23 @@ def post_devto(article):
     return "posted"
 
 
-def changelog_entry(path, version):
-    """The paragraph under '## <version>' in CHANGELOG.md, or None."""
+def changelog_releases(path):
+    """[(version, date or None, text)] from CHANGELOG.md headings '## <version>' or '## <version> (<YYYY-MM-DD>)'."""
+    import re
     try:
         text = open(path, encoding="utf-8").read()
     except OSError:
-        return None
+        return []
+    out = []
+    for m in re.finditer(r"^## (\S+)(?: \((\d{4}-\d{2}-\d{2})\))?\n(.*?)(?=^## |\Z)", text, re.M | re.S):
+        out.append((m.group(1), m.group(2), m.group(3).strip()))
+    return out
+
+
+def changelog_entry(path, version):
+    """The paragraph for this version in CHANGELOG.md, or None."""
     v = version.lstrip("v")
-    parts = text.split(f"\n## {v}\n", 1)
-    if len(parts) < 2:
-        return None
-    return parts[1].split("\n## ", 1)[0].strip() or None
+    return next((t for ver, _, t in changelog_releases(path) if ver == v and t), None)
 
 
 def release_post(version, entry):

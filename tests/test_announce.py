@@ -82,3 +82,19 @@ class Release(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         v = re.search(r'^version = "([^"]+)"', open(os.path.join(root, "pyproject.toml")).read(), re.M).group(1)  # no tomllib on 3.10
         self.assertIsNotNone(announce.changelog_entry(os.path.join(root, "CHANGELOG.md"), v), "add a CHANGELOG.md entry before tagging")
+
+
+class WeeklyShipped(unittest.TestCase):
+    def test_weekly_article_lists_releases_of_that_week_only(self):
+        from mcpwatch import announce
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "CHANGELOG.md")
+            open(p, "w").write("# Changelog\n\n## 0.4.0 (2026-11-25)\nNew thing.\n\n## 0.1.0 (2026-10-01)\nOld thing.\n")
+            changes = [{"date": "2026-11-30", "items": []}, {"date": "2026-11-24", "items": []}]
+            body = announce.weekly_article({"servers": 1, "open": 1}, changes, changelog=p)["article"]["body_markdown"]
+            self.assertIn("## What shipped in mcpwatch this week", body)
+            self.assertIn("**0.4.0**: New thing.", body)
+            self.assertNotIn("Old thing", body)
+            self.assertEqual(announce.changelog_entry(p, "v0.4.0"), "New thing.")
+            quiet = announce.weekly_article({"servers": 1, "open": 1}, [{"date": "2026-12-20", "items": []}], changelog=p)
+            self.assertNotIn("What shipped", quiet["article"]["body_markdown"])
