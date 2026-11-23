@@ -93,6 +93,18 @@ curl 'https://www.mcpwatch.io/api/v1/lookup?package=npm:@scope/server'   # also 
 Returns the id, grade, score, auth status, last verified date and findings as rule codes, never third-party text, so
 it is safe to hand to a model. 60 lookups/hour per IP; a Team report key (`Authorization: Bearer ...`) allows 5,000/hour.
 
+## For maintainers: claim your page
+
+Commit a file named `.mcpwatch` to the default branch of the GitHub repository your MCP registry entry lists:
+
+```
+claim: <your server id from www.mcpwatch.io/s/...>
+MW005: intended          # optional, per current finding: intended | fixing | false-positive
+```
+
+Then press "Verify my claim" on your server page. The page shows "Claimed" and your responses as fixed labels; grades
+don't change. Remove the line to withdraw the claim. Free text isn't shown, by design.
+
 ## What `check` treats as drift
 
 | Change | Severity |
