@@ -408,7 +408,13 @@ const h=$('h3',hot.length?hot.length+' notable change'+(hot.length===1?'':'s'):'
 if(hot.length){const ul=$('ul',null,'feed');hot.slice(0,200).forEach(i=>ul.append(row(i)));s.append(ul)}
 else s.append($('p','Nothing matched our checks for dropped auth, falling grades or suspicious tool text.','mut'));
 if(rest.length){const det=$('details'),sm=$('summary',rest.length+' routine update'+(rest.length===1?'':'s')+' (reworded descriptions, new or removed tools)');
-const ul=$('ul',null,'feed');rest.slice(0,300).forEach(i=>ul.append(row(i)));det.append(sm,ul);s.append(det)}
+const pub=i=>i.name.split('/')[0],by={};rest.forEach(i=>(by[pub(i)]=by[pub(i)]||[]).push(i));
+const ul=$('ul',null,'feed');let shown=0;
+Object.keys(by).sort((x,y)=>by[y].length-by[x].length).forEach(p=>{const g=by[p];
+ if(g.length>10){const li=$('li'),d2=$('details'),s2=$('summary',p+': '+g.length+' servers from one publisher updated their tools'),u2=$('ul',null,'feed');
+  g.slice(0,100).forEach(i=>u2.append(row(i)));d2.append(s2,u2);li.append(d2);ul.append(li)}
+ else g.forEach(i=>{if(shown++<300)ul.append(row(i))})});
+det.append(sm,ul);s.append(det)}
 box.append(s)})}).catch(()=>box.replaceChildren($('p','Could not load the feed.')));
 """
 
