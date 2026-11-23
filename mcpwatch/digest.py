@@ -78,15 +78,17 @@ EFFECTIVE_PLAN = ("CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', '
                   "OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END")
 
 
-def watchers(slugs, query):
-    """{email: {"id", "plan", "slugs"}} for confirmed users watching any of `slugs`. One query."""
+def watchers(slugs, query, billing=False):
+    """{email: {"id", "plan", "slugs"}} for confirmed users watching any of `slugs`. One query.
+    Team members get the owner's watches only while the owner's plan is team (any owner during the free beta)."""
     # own watches, plus (Team seats) every confirmed member gets the owner's watches at the owner's plan
     rows = query("SELECT u.id, u.email, u.slack_webhook, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users u JOIN watches w ON w.user_id = u.id "
                  "WHERE u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
                  "UNION SELECT m.id, m.email, m.slack_webhook, w.slug, " + EFFECTIVE_PLAN + " AS plan FROM users m "
                  "JOIN users u ON m.team_owner = u.id JOIN watches w ON w.user_id = u.id "
                  "WHERE m.confirmed AND u.confirmed AND NOT w.pending AND w.slug IN (SELECT jsonb_array_elements_text($1::jsonb)) "
-                 "ORDER BY 2, 4", [json.dumps(sorted(slugs))])
+                 "AND (NOT $2::boolean OR " + EFFECTIVE_PLAN + " = 'team') "
+                 "ORDER BY 2, 4", [json.dumps(sorted(slugs)), "true" if billing else "false"])
     out = {}
     for r in rows:
         u = out.setdefault(r["email"], {"id": r["id"], "plan": r.get("plan") or "free", "slack": r.get("slack_webhook"), "slugs": set()})
@@ -143,7 +145,7 @@ def run(changes, today, query, send, dry_run=False, billing=False, slack=slack_p
     if not dry_run:
         query("DELETE FROM tokens WHERE expires_at < now()", [])  # prune; older unsubscribe links stay valid until they expire
     users = {}
-    for email, u in watchers({it["slug"] for it in daily + weekly}, query).items():
+    for email, u in watchers({it["slug"] for it in daily + weekly}, query, billing).items():
         week = billing and u["plan"] == "free"
         its = pick(weekly if week else daily, u["slugs"])
         if its:

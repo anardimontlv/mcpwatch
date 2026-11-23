@@ -117,7 +117,13 @@ function ensureSchema() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook text`, // optional Slack incoming-webhook URL (a credential)
       // Team seats: a member gets the owner's watchlist alerts. invited_by is set until the emailed link is confirmed.
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS team_owner bigint REFERENCES users(id) ON DELETE SET NULL,
-        ADD COLUMN IF NOT EXISTS invited_by bigint REFERENCES users(id) ON DELETE SET NULL`,
+        ADD COLUMN IF NOT EXISTS invited_by bigint REFERENCES users(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS invite_hash text, ADD COLUMN IF NOT EXISTS invite_expires timestamptz`, // own slot: never clobbers a sign-up link
+      // Team org view: per-repo results sent by `mcpwatch report` with a report key, checked against users.policy
+      `ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_kind_check, ADD CONSTRAINT tokens_kind_check CHECK (kind IN ('manage', 'unsub', 'report'))`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS policy jsonb`,
+      `CREATE TABLE IF NOT EXISTS repo_reports (user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE, repo text NOT NULL,
+        reported_at timestamptz NOT NULL DEFAULT now(), servers jsonb NOT NULL, violations jsonb NOT NULL, PRIMARY KEY (user_id, repo))`,
     ]) await sql(q);
   })().catch((e) => { schema = null; throw e; });
   return schema;
@@ -127,7 +133,7 @@ const unsubLink = (token) => `${SITE}/api/unsubscribe?t=${token}`;
 const newToken = () => crypto.randomBytes(32).toString("base64url");
 const hash = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 
-const TOKEN_TTL = { manage: "30 days", unsub: "90 days" };
+const TOKEN_TTL = { manage: "30 days", unsub: "90 days", report: "365 days" };
 // Stores only the hash. No per-user cap on purpose: a cap would let anyone who knows an address push that user's real,
 // older links out by requesting new ones. Growth is bounded by the mail rate limit and expiry + pruning.
 async function issueToken(userId, kind) {
@@ -140,6 +146,33 @@ async function issueToken(userId, kind) {
 // period end) mean free; past_due keeps the plan for a 7-day grace. mcpwatch/digest.py has the same expression.
 const EFFECTIVE_PLAN = `CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', 'trialing')
   OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END`;
+// Team policy: which checks fail a repo's report. Unknown keys are dropped; grades compare A (best) to F.
+const POLICY_KEYS = ["no_plain_http", "require_pinned", "no_secrets", "require_auth", "indexed_only"];
+function cleanPolicy(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new HttpError(400, "policy must be an object");
+  const out = {};
+  for (const k of POLICY_KEYS) if (v[k] === true) out[k] = true;
+  if (v.min_grade != null && v.min_grade !== "") {
+    if (!/^[A-F]$/.test(v.min_grade)) throw new HttpError(400, "min_grade must be A to F");
+    out.min_grade = v.min_grade;
+  }
+  return out;
+}
+// One violation per broken rule per server. `rec` is the public index record (or undefined for a private server).
+function policyViolations(policy, label, rules, rec) {
+  const p = policy || {}, v = [];
+  const has = (r) => rules.includes(r);
+  if (p.no_plain_http && has("MW004")) v.push({ server: label, rule: "no_plain_http", message: "remote server over plain HTTP" });
+  if (p.require_pinned && has("MW002")) v.push({ server: label, rule: "require_pinned", message: "package version is not pinned" });
+  if (p.no_secrets && has("MW001")) v.push({ server: label, rule: "no_secrets", message: "plaintext secret in the config" });
+  if (p.indexed_only && !rec) v.push({ server: label, rule: "indexed_only", message: "server is not in the public MCP registry index" });
+  if (rec && p.require_auth && rec.a === "open") v.push({ server: label, rule: "require_auth", message: "endpoint lists its tools to anyone without credentials" });
+  if (rec && p.min_grade && /^[A-F]$/.test(rec.g || "") && rec.g > p.min_grade) {
+    v.push({ server: label, rule: "min_grade", message: `grade ${rec.g} is below the team minimum ${p.min_grade}` });
+  }
+  return v;
+}
+
 // Team features: open to everyone in the free beta, the team plan once billing is on.
 const TEAM_SEATS = () => envInt("TEAM_SEATS", 10);
 const teamAllowed = (plan) => !billingEnabled() || plan === "team";
@@ -152,7 +185,7 @@ function planLimit(plan) {
 
 // The user behind an unexpired token of exactly this kind (with effective plan), or undefined.
 const tokenUser = async (kind, t) => (await sql(
-  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id, u.slack_webhook, u.team_owner
+  `SELECT u.id, u.email, ${EFFECTIVE_PLAN} AS plan, u.paddle_customer_id, u.paddle_subscription_id, u.slack_webhook, u.team_owner, u.policy
    FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = $1 AND t.kind = $2 AND t.expires_at > now()`,
   [hash(t), kind]))[0];
 // Deletes the user behind an unexpired token of this kind; tokens and watches go with it (ON DELETE CASCADE).
@@ -279,5 +312,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, teamAllowed, TEAM_SEATS, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, teamAllowed, cleanPolicy, policyViolations, POLICY_KEYS, TEAM_SEATS, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };

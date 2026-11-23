@@ -10,12 +10,14 @@ module.exports = L.handler(async (req, res) => {
   const { t } = await L.readJson(req);
   if (typeof t !== "string" || !L.TOKEN.test(t)) throw new L.HttpError(400, "this link is malformed: start again from the watch page");
   await L.ensureSchema();
-  const [user] = await L.sql(
+  // a sign-up confirmation, or a team invite (separate column, so neither can overwrite the other's link)
+  const [user] = (await L.sql(
     `UPDATE users SET confirmed = true, confirm_hash = NULL, confirm_expires = NULL
-     WHERE confirm_hash = $1 AND confirm_expires > now() RETURNING id`, [L.hash(t)]);
+     WHERE confirm_hash = $1 AND confirm_expires > now() RETURNING id`, [L.hash(t)])).concat(await L.sql(
+    `UPDATE users SET confirmed = true, team_owner = invited_by, invited_by = NULL, invite_hash = NULL, invite_expires = NULL
+     WHERE invite_hash = $1 AND invite_expires > now() AND invited_by IS NOT NULL RETURNING id`, [L.hash(t)]));
   if (!user) throw new L.HttpError(410, "this link was already used or has expired (links last 24 hours): start again from the watch page");
   await L.sql(`UPDATE watches SET pending = false WHERE user_id = $1`, [user.id]);
-  await L.sql(`UPDATE users SET team_owner = invited_by, invited_by = NULL WHERE id = $1 AND invited_by IS NOT NULL`, [user.id]); // accepted a team invite
   const manage = await L.issueToken(user.id, "manage");
   L.send(res, 200, { ok: true, manage });
 });

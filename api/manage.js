@@ -70,7 +70,7 @@ module.exports = L.handler(async (req, res) => {
     const [m] = await L.sql(`INSERT INTO users (email) VALUES ($1) ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id, team_owner`, [email]);
     if (String(m.team_owner || "") !== String(user.id) && !(await L.limited("mail", email, 3))) {
       const t = L.newToken(), unsub = await L.issueToken(m.id, "unsub");
-      await L.sql(`UPDATE users SET confirm_hash = $2, confirm_expires = now() + interval '7 days', invited_by = $3 WHERE id = $1`, [m.id, L.hash(t), user.id]);
+      await L.sql(`UPDATE users SET invite_hash = $2, invite_expires = now() + interval '7 days', invited_by = $3 WHERE id = $1`, [m.id, L.hash(t), user.id]);
       await L.sendMail({ to: email, subject: "You are invited to an mcpwatch team",
         text: `${user.email} invited you to their mcpwatch team. Members get an alert when an MCP server on the team's watchlist changes.\n\n` +
           `Accept: ${L.SITE}/api/confirm?t=${t}\n\nThe link works once and expires in 7 days. If you do not want this, ignore this email.\n\n` +
@@ -81,7 +81,7 @@ module.exports = L.handler(async (req, res) => {
     const email = L.cleanEmail(body.email);
     await L.sql(`UPDATE users SET team_owner = CASE WHEN team_owner = $1 THEN NULL ELSE team_owner END,
       invited_by = CASE WHEN invited_by = $1 THEN NULL ELSE invited_by END,
-      confirm_hash = CASE WHEN invited_by = $1 THEN NULL ELSE confirm_hash END WHERE email = $2`, [user.id, email]);
+      invite_hash = CASE WHEN invited_by = $1 THEN NULL ELSE invite_hash END WHERE email = $2`, [user.id, email]);
   }
   if (action === "leave_team") await L.sql(`UPDATE users SET team_owner = NULL WHERE id = $1`, [user.id]);
   const team = action === "leave_team" ? null : user.team_owner;

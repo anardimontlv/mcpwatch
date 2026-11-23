@@ -28,8 +28,10 @@ class FakeDB:
             row = lambda e, s, plan_of: {"id": self.ids.get(e, e), "email": e, "slug": s, "plan": self.plans.get(plan_of, "free"),
                                          "slack_webhook": self.slack.get(e)}
             own = [row(e, s, e) for e, s in sorted(self.watches) if s in wanted and e in self.confirmed]
+            assert "= 'team'" in q and params[1] in ("true", "false")
             team = [row(m, s, o) for m, o in self.members.items() for e, s in sorted(self.watches)
-                    if e == o and s in wanted and m in self.confirmed and o in self.confirmed]
+                    if e == o and s in wanted and m in self.confirmed and o in self.confirmed
+                    and (params[1] == "false" or self.plans.get(o) == "team")]
             return sorted(own + team, key=lambda r: (r["email"], r["slug"]))
         if q.startswith("INSERT INTO tokens") and "'unsub'" in q:
             self.unsub.setdefault(params[0], []).append(params[1])  # older tokens are kept, not replaced
@@ -51,6 +53,12 @@ class Team(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             digest.run(CHANGES, TODAY, db, lambda to, *a: sent.append(to) or True, billing=True)
         self.assertEqual(sent, ["ann@example.com", "mia@example.com"], "confirmed member gets it daily; unconfirmed invitee does not")
+        # the owner drops to pro: members stop getting the team's alerts
+        db.plans["ann@example.com"] = "pro"
+        sent.clear()
+        with redirect_stdout(io.StringIO()):
+            digest.run(CHANGES, TODAY, db, lambda to, *a: sent.append(to) or True, billing=True)
+        self.assertEqual(sent, ["ann@example.com"])
 
 
 class Slack(unittest.TestCase):

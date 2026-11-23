@@ -80,14 +80,18 @@ function fakeSql(q, p) {
     return [];
   }
   if (q.includes("SET confirm_hash = $2")) {
-    Object.assign(user((x) => x.id === p[0]), { confirm_hash: p[1], confirm_expires: now + (q.includes("7 days") ? 7 : 1) * 24 * 3600e3,
-      invited_by: p[2] ?? null });
+    Object.assign(user((x) => x.id === p[0]), { confirm_hash: p[1], confirm_expires: now + 24 * 3600e3 });
     return [];
   }
-  if (q.startsWith("UPDATE users SET team_owner = invited_by")) {
-    const u = user((x) => x.id === p[0]);
-    if (u.invited_by) Object.assign(u, { team_owner: u.invited_by, invited_by: null });
+  if (q.includes("SET invite_hash = $2")) {
+    Object.assign(user((x) => x.id === p[0]), { invite_hash: p[1], invite_expires: now + 7 * 24 * 3600e3, invited_by: p[2] });
     return [];
+  }
+  if (q.includes("team_owner = invited_by")) { // accept a team invite
+    const u = user((x) => x.invite_hash === p[0] && x.invite_expires > now && x.invited_by);
+    if (!u) return [];
+    Object.assign(u, { confirmed: true, team_owner: u.invited_by, invited_by: null, invite_hash: null, invite_expires: null });
+    return [{ id: u.id }];
   }
   if (q.startsWith("SELECT count(*) AS n FROM users WHERE (team_owner = $1 OR invited_by = $1)")) {
     return [{ n: String(db.users.filter((x) => (x.team_owner === p[0] || x.invited_by === p[0]) && x.email !== p[1]).length) }];
@@ -96,7 +100,7 @@ function fakeSql(q, p) {
     const u = user((x) => x.email === p[1]);
     if (u) {
       const inv = u.invited_by === p[0];
-      Object.assign(u, { team_owner: u.team_owner === p[0] ? null : u.team_owner, invited_by: inv ? null : u.invited_by, confirm_hash: inv ? null : u.confirm_hash });
+      Object.assign(u, { team_owner: u.team_owner === p[0] ? null : u.team_owner, invited_by: inv ? null : u.invited_by, invite_hash: inv ? null : u.invite_hash });
     }
     return [];
   }
@@ -473,10 +477,13 @@ test("team seats: invite, accept through the emailed link, list, remove; member 
   assert.equal((await op({ action: "invite", email: "x@example.com" }, mem)).status, 400, "a member can't invite");
   assert.equal((await op({ action: "leave_team" }, mem)).json.team_of, null);
   assert.equal(db.users.find((u) => u.email === "mem@example.com").team_owner, null);
-  // a self sign-up never joins a team, even with a pending invite
+  // a self sign-up never joins a team, and an invite never breaks a pending sign-up link (separate slots)
+  await call(subscribe, { body: { email: "late@example.com", slugs: [KNOWN[1]] } });
+  const own = mails.at(-1);
   await op({ action: "invite", email: "late@example.com" });
-  await signUp("late@example.com", [KNOWN[1]]);
+  assert.equal((await call(confirm, { url: "/api/confirm", body: { t: confirmTok(own) } })).status, 200, "sign-up link still works");
   assert.equal(db.users.find((u) => u.email === "late@example.com").team_owner ?? null, null);
+  await op({ action: "remove_member", email: "late@example.com" });
   // remove a pending invite: its link stops working
   await op({ action: "invite", email: "gone@example.com" });
   const goneMail = mails.at(-1);
