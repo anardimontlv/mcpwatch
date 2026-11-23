@@ -119,8 +119,8 @@ function fakeSql(q, p) {
     db.watches = db.watches.filter((w) => !(w.user_id === p[0] && s.includes(w.slug)));
     return [];
   }
-  if (q.includes("SELECT slug FROM watches WHERE user_id = $1 AND NOT pending")) {
-    return db.watches.filter((w) => w.user_id === p[0] && !w.pending).map((w) => ({ slug: w.slug })).sort((a, b) => a.slug.localeCompare(b.slug));
+  if (q.includes("SELECT slug, added_at FROM watches WHERE user_id = $1 AND NOT pending")) {
+    return db.watches.filter((w) => w.user_id === p[0] && !w.pending).map((w) => ({ slug: w.slug, added_at: "2026-11-22 10:00:00+00" })).sort((a, b) => a.slug.localeCompare(b.slug));
   }
   throw new Error("fake sql: unexpected query: " + q.slice(0, 60));
 }

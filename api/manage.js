@@ -58,7 +58,7 @@ module.exports = L.handler(async (req, res) => {
     await L.sql(`UPDATE users SET slack_webhook = $2 WHERE id = $1`, [user.id, url || null]);
     slack = Boolean(url);
   }
-  const rows = await L.sql(`SELECT slug FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
-  L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), max: limit, limit,
-    plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed });
+  const rows = await L.sql(`SELECT slug, added_at FROM watches WHERE user_id = $1 AND NOT pending ORDER BY slug`, [user.id]);
+  L.send(res, 200, { ok: true, email: user.email, slugs: rows.map((r) => r.slug), since: Object.fromEntries(rows.map((r) => [r.slug, r.added_at])),
+    max: limit, limit, plan: user.plan, billing_enabled: L.billingEnabled(), slack, slack_allowed: slackAllowed, team_allowed: L.teamAllowed(user.plan) });
 });

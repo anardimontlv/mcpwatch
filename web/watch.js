@@ -88,8 +88,59 @@
     renderList(d.slugs);
     renderBilling(d);
     renderSlack(d);
+    $("w-export").hidden = !d.team_allowed;
+    last = d;
     return true;
   }
+
+  // ---- audit export (Team): built in the browser from the public index + this account's watch dates ----
+  let last = null;
+  // CSV cells: quoted; a leading = + - @ tab or CR is neutralized so a spreadsheet never runs third-party text as a formula
+  const cell = (v) => { let t = v == null ? "" : String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+  async function auditRows(d) {
+    let changes = [];
+    try { changes = await getJSON("/changes.json"); } catch (e) { /* export without recent changes */ }
+    return Promise.all(d.slugs.map(async (sl) => {
+      const r = (await getJSON("/d/" + sl.slice(-8, -6) + ".json"))[sl] || {};
+      const recent = [];
+      for (const day of Array.isArray(changes) ? changes : []) {
+        for (const it of day.items || []) {
+          if (it.slug === sl) recent.push({ date: day.date, notable: it.notable || [], changes: (it.changes || []).map((c) => ({ kind: c.kind, severity: c.sev, detail: c.detail })) });
+        }
+      }
+      return { id: sl, name: r.n || sl, title: r.t || "", page: location.origin + "/s/" + sl, watched_since: (d.since || {})[sl] || "",
+        grade: r.g || "", score: r.s ?? "", auth: r.a || "", last_verified: r.vd || "", rules_version: r.rv || "",
+        findings: (r.f || []).map((f) => ({ severity: f[0], rule: f[1], message: f[2] })), recent_changes: recent };
+    }));
+  }
+  function download(name, type, text) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+  async function exportAudit(fmt) {
+    if (!last) return;
+    msg("Building the export…");
+    let rows;
+    try { rows = await auditRows(last); } catch (e) { msg("Could not reach the index, try again."); return; }
+    const stamp = new Date().toISOString(), day = stamp.slice(0, 10);
+    if (fmt === "json") {
+      download("mcpwatch-audit-" + day + ".json", "application/json", JSON.stringify({ generated_at: stamp, account: last.email, plan: last.plan,
+        source: location.origin, note: "Grades are automated signals, not audits.", servers: rows }, null, 2));
+    } else {
+      const head = ["server_id", "name", "title", "page", "watched_since", "grade", "score", "auth", "last_verified", "findings", "high_findings", "changes_recent", "notable_recent"];
+      const lines = [head.join(",")].concat(rows.map((r) => [r.id, r.name, r.title, r.page, r.watched_since, r.grade, r.score, r.auth, r.last_verified,
+        r.findings.length, r.findings.filter((f) => /high|critical/i.test(f.severity)).length, r.recent_changes.length,
+        r.recent_changes.flatMap((c) => c.notable).join("; ")].map(cell).join(",")));
+      download("mcpwatch-audit-" + day + ".csv", "text/csv", lines.join("\r\n") + "\r\n");
+    }
+    msg("Export downloaded: " + rows.length + " server" + (rows.length === 1 ? "" : "s") + ".");
+  }
+  $("w-exp-csv").addEventListener("click", () => exportAudit("csv"));
+  $("w-exp-json").addEventListener("click", () => exportAudit("json"));
 
   function renderSlack(d) {
     $("w-slack").hidden = !d.slack_allowed && !d.slack;

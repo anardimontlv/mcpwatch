@@ -137,6 +137,8 @@ async function issueToken(userId, kind) {
 // period end) mean free; past_due keeps the plan for a 7-day grace. mcpwatch/digest.py has the same expression.
 const EFFECTIVE_PLAN = `CASE WHEN u.plan <> 'free' AND (u.plan_status IN ('active', 'trialing')
   OR (u.plan_status = 'past_due' AND u.past_due_since > now() - interval '7 days')) THEN u.plan ELSE 'free' END`;
+// Team features: open to everyone in the free beta, the team plan once billing is on.
+const teamAllowed = (plan) => !billingEnabled() || plan === "team";
 const billingEnabled = () => /^(1|true|yes|on)$/i.test(process.env.BILLING_ENABLED || "");
 const envInt = (k, d) => (/^\d+$/.test(process.env[k] || "") ? Number(process.env[k]) : d);
 function planLimit(plan) {
@@ -273,5 +275,5 @@ const handler = (fn) => async (req, res) => {
   }
 };
 
-module.exports = { deps, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
+module.exports = { deps, teamAllowed, SLACK_HOOK, slackPost: (...a) => deps.slackPost(...a), EFFECTIVE_PLAN, billingEnabled, planLimit, limitError, paddle: (...a) => deps.paddle(...a), unsubLink, issueToken, tokenUser, deleteByToken, sql, sendMail, ensureSchema, newToken, hash, limited, clientIp, readJson, cleanEmail, cleanSlugs, addWatches,
   send, htmlPage, handler, HttpError, SITE, TOKEN, MAX_SLUGS, _resetSchema: () => { schema = null; } };
