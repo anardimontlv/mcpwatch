@@ -81,15 +81,34 @@ async function slackPost(url, text) {
 }
 
 // Small public text file (a maintainer's .mcpwatch): null on 404, size-capped, no redirects.
+// Streams and stops at `max` bytes: Content-Length can lie or be absent.
 async function fetchText(url, max) {
-  const r = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(8000) });
+  const r = await fetch(url, { redirect: "error", headers: { "Accept-Encoding": "identity" }, signal: AbortSignal.timeout(8000) });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  if (Number(r.headers.get("content-length") || 0) > max) return "";
-  return (await r.text()).slice(0, max);
+  const reader = r.body.getReader(), chunks = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) { await reader.cancel(); return ""; } // oversized: treated as no valid claim
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
-const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, fetchText, paddle: paddleFetch, slackPost };
+// {id, owner_id, owner} of a public GitHub repo, or null if it doesn't exist. No redirects: a renamed repo must be re-checked.
+async function githubRepoInfo(repo) {
+  const r = await fetch(`https://api.github.com/repos/${repo}`, { redirect: "error",
+    headers: { "User-Agent": "mcpwatch", Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(8000) });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const j = await r.json();
+  return { id: String(j.id), owner_id: String(j.owner && j.owner.id), owner: String(j.owner && j.owner.login) };
+}
+
+const deps = { sql: neonSql, sendMail: resendSend, fetchJSON, fetchText, githubRepoInfo, paddle: paddleFetch, slackPost };
 const sql = (query, params = []) =>
   deps.sql(query, params.map((p) => (p == null ? null : typeof p === "object" ? JSON.stringify(p) : String(p))));
 const sendMail = (m) => deps.sendMail(m);
@@ -136,6 +155,8 @@ function ensureSchema() {
       // maintainer claims: proven by a .mcpwatch file in the registry-listed GitHub repo; responses are fixed labels
       `CREATE TABLE IF NOT EXISTS maintainer_claims (slug text PRIMARY KEY, repo text NOT NULL, responses jsonb NOT NULL,
         verified_at timestamptz NOT NULL DEFAULT now())`,
+      // the repo's numeric GitHub ids, pinned at the first claim: a re-registered (repojacked) name has new ids
+      `ALTER TABLE maintainer_claims ADD COLUMN IF NOT EXISTS repo_id text, ADD COLUMN IF NOT EXISTS owner_id text`,
       `CREATE TABLE IF NOT EXISTS repo_reports (user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE, repo text NOT NULL,
         reported_at timestamptz NOT NULL DEFAULT now(), servers jsonb NOT NULL, violations jsonb NOT NULL, PRIMARY KEY (user_id, repo))`,
     ]) await sql(q);

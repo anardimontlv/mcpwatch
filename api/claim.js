@@ -48,7 +48,8 @@ module.exports = L.handler(async (req, res) => {
   const slug = typeof body.slug === "string" ? body.slug : "";
   if (!ID.test(slug)) throw new L.HttpError(400, "invalid server id");
   await L.ensureSchema();
-  if (await L.limited("claim-ip", L.clientIp(req), 30) || await L.limited("claim", slug, 20)) {
+  // per IP, and per (server, IP): nobody can use up a maintainer's budget for their own server
+  if (await L.limited("claim-ip", L.clientIp(req), 30) || await L.limited("claim", slug + "|" + L.clientIp(req), 10)) {
     throw new L.HttpError(429, "too many checks, try again in an hour");
   }
   let rec;
@@ -60,19 +61,32 @@ module.exports = L.handler(async (req, res) => {
   if (!rec) throw new L.HttpError(404, "unknown server id");
   const repo = githubRepo(rec.r);
   if (!repo) throw new L.HttpError(400, "the registry lists no GitHub repository for this server, so it can't be claimed this way: open an issue instead");
-  let text;
+  // io.github.<owner>/... names were verified against that GitHub owner by the registry: the repo must belong to them
+  const ns = /^io\.github\.([^/]+)\//i.exec(String(rec.n || ""));
+  if (ns && ns[1].toLowerCase() !== repo.split("/")[0].toLowerCase()) {
+    throw new L.HttpError(400, "the listed repository is not owned by the GitHub account in this server's registry name: open an issue instead");
+  }
+  let text, info;
   try {
-    text = await L.deps.fetchText(`https://raw.githubusercontent.com/${repo}/HEAD/.mcpwatch`, MAX_FILE);
+    [text, info] = await Promise.all([L.deps.fetchText(`https://raw.githubusercontent.com/${repo}/HEAD/.mcpwatch`, MAX_FILE), L.deps.githubRepoInfo(repo)]);
   } catch (_) {
     throw new L.HttpError(503, "could not reach GitHub, try again shortly");
   }
-  const responses = text == null ? null : parseClaimFile(text, slug, new Set((rec.f || []).map((f) => f[1])));
+  const [prev] = await L.sql(`SELECT repo_id, owner_id FROM maintainer_claims WHERE slug = $1`, [slug]);
+  if (info && prev && prev.repo_id && (prev.repo_id !== info.id || prev.owner_id !== info.owner_id)) {
+    // same name, different repository or owner: a deleted/renamed account may have been re-registered
+    await L.sql(`DELETE FROM maintainer_claims WHERE slug = $1`, [slug]);
+    throw new L.HttpError(409, "this repository is not the one that made the original claim: the claim was removed. Open an issue if you are the maintainer");
+  }
+  const responses = text == null || !info ? null : parseClaimFile(text, slug, new Set((rec.f || []).map((f) => f[1])));
   if (!responses) {
     await L.sql(`DELETE FROM maintainer_claims WHERE slug = $1`, [slug]); // claim file gone or no longer lists this server
     throw new L.HttpError(404, `no .mcpwatch file in ${repo} (default branch) with the line "claim: ${slug}". GitHub can take ~5 minutes to serve a new file`);
   }
-  await L.sql(`INSERT INTO maintainer_claims (slug, repo, responses, verified_at) VALUES ($1, $2, $3::jsonb, now())
-    ON CONFLICT (slug) DO UPDATE SET repo = EXCLUDED.repo, responses = EXCLUDED.responses, verified_at = now()`, [slug, repo, responses]);
+  await L.sql(`INSERT INTO maintainer_claims (slug, repo, responses, verified_at, repo_id, owner_id) VALUES ($1, $2, $3::jsonb, now(), $4, $5)
+    ON CONFLICT (slug) DO UPDATE SET repo = EXCLUDED.repo, responses = EXCLUDED.responses, verified_at = now(),
+      repo_id = COALESCE(maintainer_claims.repo_id, EXCLUDED.repo_id), owner_id = COALESCE(maintainer_claims.owner_id, EXCLUDED.owner_id)`,
+    [slug, repo, responses, info.id, info.owner_id]);
   L.send(res, 200, { ok: true, claimed: true, repo, responses });
 });
 module.exports.parseClaimFile = parseClaimFile;

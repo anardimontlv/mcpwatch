@@ -122,11 +122,14 @@ function fakeSql(q, p) {
   }
   if (q.startsWith("SELECT repo, reported_at, servers, violations FROM repo_reports")) return (db.repos || []).filter((r) => r.user_id === p[0]);
   if (q.startsWith("DELETE FROM repo_reports")) { db.repos = (db.repos || []).filter((r) => !(r.user_id === p[0] && r.repo === p[1])); return []; }
+  if (q.startsWith("SELECT repo_id, owner_id FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
   if (q.startsWith("SELECT repo, responses, verified_at FROM maintainer_claims")) return (db.claims || []).filter((c) => c.slug === p[0]);
   if (q.startsWith("DELETE FROM maintainer_claims")) { db.claims = (db.claims || []).filter((c) => c.slug !== p[0]); return []; }
   if (q.startsWith("INSERT INTO maintainer_claims")) {
+    const old = (db.claims || []).find((c) => c.slug === p[0]);
     db.claims = (db.claims || []).filter((c) => c.slug !== p[0]);
-    db.claims.push({ slug: p[0], repo: p[1], responses: p[2], verified_at: "2026-11-23 10:00:00+00" });
+    db.claims.push({ slug: p[0], repo: p[1], responses: p[2], verified_at: "2026-11-23 10:00:00+00",
+      repo_id: (old && old.repo_id) || p[3], owner_id: (old && old.owner_id) || p[4] });
     return [];
   }
   if (q === "SELECT email FROM users WHERE id = $1") return db.users.filter((x) => x.id === p[0]).map((x) => ({ email: x.email }));
@@ -599,6 +602,8 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   L.deps.fetchJSON = async () => ({ [id]: { n: "io.github.acme/srv", r: "https://github.com/acme/srv.git", f: [["low", "MW005", "x"], ["medium", "MW002", "y"]] },
     "io-gitlab-x-0a1b2c3d": { r: "https://gitlab.com/x/y", f: [] } });
   L.deps.fetchText = async (u) => { fetched.push(u); return file; };
+  let ghInfo = { id: "111", owner_id: "222", owner: "acme" };
+  L.deps.githubRepoInfo = async () => ghInfo;
   const post = (body) => call(claim, { url: "/api/claim", body });
   assert.equal((await post({ slug: id })).status, 404, "no file yet");
   assert.deepEqual(fetched, ["https://raw.githubusercontent.com/acme/srv/HEAD/.mcpwatch"]);
@@ -614,7 +619,21 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   assert.equal((await post({ slug: id })).status, 404);
   assert.equal((await get(claim, "/api/claim?slug=" + id)).json.claimed, false, "claim removed when the file stops listing it");
   assert.equal((await post({ slug: "io-gitlab-x-0a1b2c3d" })).status, 400, "only GitHub repos from the registry");
+  // per-(server, IP) limit: another IP still gets through after one IP used its budget
+  db.rl = [];
+  for (let i = 0; i < 10; i++) await call(claim, { url: "/api/claim", body: { slug: id }, ip: "6.6.6.6" });
+  assert.equal((await call(claim, { url: "/api/claim", body: { slug: id }, ip: "6.6.6.6" })).status, 429);
+  assert.notEqual((await call(claim, { url: "/api/claim", body: { slug: id }, ip: "7.7.7.7" })).status, 429);
   assert.equal((await post({ slug: "../../x" })).status, 400);
+  // repojacking: same name, new repository ids after the first claim -> refused and the claim is dropped
+  file = `claim: ${id}`;
+  assert.equal((await post({ slug: id })).status, 200);
+  ghInfo = { id: "999", owner_id: "888", owner: "acme" };
+  assert.equal((await post({ slug: id })).status, 409);
+  assert.equal((await get(claim, "/api/claim?slug=" + id)).json.claimed, false);
+  // io.github.<owner>/ names must be claimed from that owner's repos
+  L.deps.fetchJSON = async () => ({ [id]: { n: "io.github.acme/srv", r: "https://github.com/mallory/srv", f: [] } });
+  assert.equal((await post({ slug: id })).status, 400);
   assert.equal(claim.githubRepo("https://github.com/a/../"), null);
   assert.equal(claim.githubRepo("https://github.com.evil.com/a/b"), null);
   assert.equal(claim.githubRepo("https://github.com/acme/srv/tree/main/pkg"), "acme/srv");
