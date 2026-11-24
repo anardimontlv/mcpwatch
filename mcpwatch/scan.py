@@ -33,16 +33,26 @@ RUNNERS = {"npx", "bunx", "pnpx", "uvx", "pipx", "dlx"}
 BROAD_PATH = re.compile(r"^(/|~|~/|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:[\\/]?|/Users/[^/]+|/home/[^/]+|/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
 UNSAFE_FLAGS = re.compile(r"^--?(allow-all|allow-all-tools|dangerously-skip-permissions|no-sandbox|disable-sandbox|unsafe|yolo|trust-all)(=.*)?$", re.I)
 INJECTION = re.compile(
-    # shortcut: a phrase right after ( or a quote is a quoted example (security tools list what they detect); upgrade to a classifier if attackers start quoting
-    r"(?<![(\"'\u201c\u2018])(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
-    # not an accuracy rule that goes on to name a claim ("do not tell the user the IBAN is wrong", "...a user that OUR is safe")
-    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}users?(?!\s+(that\s+)?(a|an|the|our)\s)"
-    r"|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
-    # shortcut: "send them to <sign-up/login URL>" is the user being sent to register; only "them" gets that exception, never it / the <data>
-    r"|instead\s+of\s+the\s+user|send\s+(it|the\s+[a-z ]+)\s+to\s+https?://|send\s+them\s+to\s+https?://(?![^\s)]*(sign-?up|register|sign-?in|login))"
+    r"(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
+    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}user|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
+    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://"
     r"|(read|cat|open|include|attach|upload)\s+[^.]{0,30}(\.ssh/|id_(rsa|ed25519|ecdsa)\b)",  # asking to read keys, not mentioning them
     re.I,
 )
+# Shapes that are usually benign: a quoted example ("(ignore previous instructions, ...)" in a security tool), an accuracy note
+# ("do not tell the user the IBAN is wrong"), the user sent to a sign-up page. Attackers can write these too, so they are never
+# dropped, only reported at medium (read it) instead of critical (poisoning).
+SOFT_AFTER_USER = re.compile(r"s?\s+(that\s+)?(a|an|the|our)\s", re.I)
+SIGNUP_URL = re.compile(r"[^/\s)?#]+/(sign-?up|register|sign-?in|login)/?(?=[\s).,;]|$)", re.I)  # whole path, no query
+
+
+def ambiguous_injection(text, m):
+    g = m.group(0).lower()
+    return (text[m.start() - 1:m.start()] in ("(", '"', "'", "\u201c", "\u2018")
+            or (g.startswith("do") and bool(SOFT_AFTER_USER.match(text, m.end())))
+            or (re.match(r"send\s+them\s", g) is not None and bool(SIGNUP_URL.match(text, m.end()))))
+
+
 DANGEROUS_TOKENS = {"exec", "execute", "shell", "bash", "sh", "zsh", "powershell", "sudo", "eval", "delete", "remove", "rm", "drop", "kill"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -213,7 +223,9 @@ def scan_tools(tools, server="(tools manifest)"):
         if hidden_chars(text + name):
             add("MW103", "critical", "contains invisible/tag Unicode characters, a common way to hide instructions from humans.")
         m = INJECTION.search(text)
-        if m:
+        if m and ambiguous_injection(text, m):
+            add("MW101", "medium", f"description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('{m.group(0)[:60]}'). Read it before trusting the server.")
+        elif m:
             add("MW101", "critical", f"description contains instruction-like text aimed at the model ('{m.group(0)[:60]}'). Possible tool poisoning.")
         toks = name_tokens(name)
         if toks & DANGEROUS_TOKENS or {"run", "command"} <= toks:

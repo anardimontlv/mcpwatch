@@ -737,7 +737,7 @@ def notable_reasons(changes, new_text):
             why.append(f"grade dropped ({c['detail']})")
     added = {c["detail"] for c in changes if c["kind"] == "tool_added"}
     for f in scan_tools([{"name": n, "description": t} for n, t in new_text.items()], "radar"):
-        if f["rule"] in ("MW101", "MW103"):
+        if f["rule"] == "MW103" or (f["rule"] == "MW101" and f["severity"] == "critical"):
             why.append("new tool text matches a tool-poisoning pattern" if f["rule"] == "MW101" else "new tool text contains invisible characters")
         elif f["rule"] == "MW102" and any(n in f["message"] for n in added):
             why.append("a newly added tool can execute commands or delete data")

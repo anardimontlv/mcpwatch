@@ -37,11 +37,20 @@
   const BROAD_PATH = rx("^(/|~|~/|\\$HOME|\\$\\{HOME\\}|%USERPROFILE%|[A-Za-z]:[\\\\/]?|/Users/[^/]+|/home/[^/]+|/root|[A-Za-z]:[\\\\/]Users[\\\\/][^\\\\/]+)[\\\\/]?" + END);
   const UNSAFE_FLAGS = rx("^--?(allow-all|allow-all-tools|dangerously-skip-permissions|no-sandbox|disable-sandbox|unsafe|yolo|trust-all)(=[^\\n]*)?" + END, "i");
   const INJECTION = rx(
-    `(?<![("'\u201c\u2018])(ignore|disregard|forget)${S}+(all${S}+|any${S}+)?(the${S}+)?(previous|prior|above|earlier)${S}+(instructions|prompts|rules)` +
-    `|do${S}+not${S}+(tell|inform|mention|reveal)[^.]{0,40}users?(?!${S}+(that${S}+)?(a|an|the|our)${S})` +
-    `|<${S}*important${S}*>|before${S}+using${S}+any${S}+other${S}+tool` +
-    `|instead${S}+of${S}+the${S}+user|send${S}+(it|the${S}+[a-z ]+)${S}+to${S}+https?://|send${S}+them${S}+to${S}+https?://(?![^${WS})]*(sign-?up|register|sign-?in|login))` +
+    `(ignore|disregard|forget)${S}+(all${S}+|any${S}+)?(the${S}+)?(previous|prior|above|earlier)${S}+(instructions|prompts|rules)` +
+    `|do${S}+not${S}+(tell|inform|mention|reveal)[^.]{0,40}user|<${S}*important${S}*>|before${S}+using${S}+any${S}+other${S}+tool` +
+    `|instead${S}+of${S}+the${S}+user|send${S}+(it|them|the${S}+[a-z ]+)${S}+to${S}+https?://` +
     `|(read|cat|open|include|attach|upload)${S}+[^.]{0,30}(\\.ssh/|id_(rsa|ed25519|ecdsa)${NOT_W})`, "i");
+  // see ambiguous_injection in mcpwatch/scan.py: reported at medium, never dropped
+  const SOFT_AFTER_USER = rx(`^s?${S}+(that${S}+)?(a|an|the|our)${S}`, "i");
+  const SIGNUP_URL = rx(`^[^/${WS})?#]+/(sign-?up|register|sign-?in|login)/?(?=[${WS}).,;]|$)`, "i");
+  const SEND_THEM = rx(`^send${S}+them${S}`, "i");
+  const ambiguousInjection = (text, m) => {
+    const g = m[0].toLowerCase(), after = text.slice(m.index + m[0].length);
+    return ["(", '"', "'", "\u201c", "\u2018"].includes(text.slice(m.index - 1, m.index) || "-")
+      || (g.startsWith("do") && SOFT_AFTER_USER.test(after))
+      || (SEND_THEM.test(m[0]) && SIGNUP_URL.test(after));
+  };
   const DANGEROUS_TOKENS = new Set(["exec", "execute", "shell", "bash", "sh", "zsh", "powershell", "sudo", "eval", "delete", "remove", "rm", "drop", "kill"]);
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
   const CONN_STRING = rx(`^[a-z][a-z0-9+.\\-]*://[^/@${WS}:]+:[^/@${WS}]+@`, "i");
@@ -534,7 +543,8 @@
       const m = INJECTION.exec(fold(text));
       if (m) {
         const hit = cps(text.substr(m.index, m[0].length)).slice(0, 60).join("");
-        add("MW101", "critical", `description contains instruction-like text aimed at the model ('${hit}'). Possible tool poisoning.`);
+        if (ambiguousInjection(fold(text), m)) add("MW101", "medium", `description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('${hit}'). Read it before trusting the server.`);
+        else add("MW101", "critical", `description contains instruction-like text aimed at the model ('${hit}'). Possible tool poisoning.`);
       }
       const toks = nameTokens(name);
       if ([...toks].some((x) => DANGEROUS_TOKENS.has(x)) || (toks.has("run") && toks.has("command"))) risky.push(name);
