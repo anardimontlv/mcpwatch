@@ -35,11 +35,11 @@ UNSAFE_FLAGS = re.compile(r"^--?(allow-all|allow-all-tools|dangerously-skip-perm
 INJECTION = re.compile(
     # shortcut: a phrase right after ( or a quote is a quoted example (security tools list what they detect); upgrade to a classifier if attackers start quoting
     r"(?<![(\"'\u201c\u2018])(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
-    # hiding something from the user ("...this to the user.", "...the user about it"), not an accuracy rule ("do not tell the user the IBAN is wrong")
-    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}users?(?=\s*([.,;:!)]|$|about\b|that\s+you\b|you\b|what\s+you\b|this\b|anything\b))"
+    # not an accuracy rule that goes on to name a claim ("do not tell the user the IBAN is wrong", "...a user that OUR is safe")
+    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}users?(?!\s+(that\s+)?(a|an|the|our)\s)"
     r"|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
-    # "send them to https://..." is usually the user being sent to a sign-up page, so only it / the <thing>
-    r"|instead\s+of\s+the\s+user|send\s+(it|the\s+[a-z ]+)\s+to\s+https?://"
+    # shortcut: a sign-up/login URL is the user being sent to register, not data being sent; drop the exception if abused
+    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://(?![^\s)]*(sign-?up|register|sign-?in|login))"
     r"|(read|cat|open|include|attach|upload)\s+[^.]{0,30}(\.ssh/|id_(rsa|ed25519|ecdsa)\b)",  # asking to read keys, not mentioning them
     re.I,
 )
