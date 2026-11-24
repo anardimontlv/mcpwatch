@@ -33,9 +33,13 @@ RUNNERS = {"npx", "bunx", "pnpx", "uvx", "pipx", "dlx"}
 BROAD_PATH = re.compile(r"^(/|~|~/|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:[\\/]?|/Users/[^/]+|/home/[^/]+|/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
 UNSAFE_FLAGS = re.compile(r"^--?(allow-all|allow-all-tools|dangerously-skip-permissions|no-sandbox|disable-sandbox|unsafe|yolo|trust-all)(=.*)?$", re.I)
 INJECTION = re.compile(
-    r"(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
-    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}user|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
-    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://"
+    # shortcut: a phrase right after ( or a quote is a quoted example (security tools list what they detect); upgrade to a classifier if attackers start quoting
+    r"(?<![(\"'\u201c\u2018])(ignore|disregard|forget)\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)"
+    # hiding something from the user ("...this to the user.", "...the user about it"), not an accuracy rule ("do not tell the user the IBAN is wrong")
+    r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}users?(?=\s*([.,;:!)]|$|about\b|that\s+you\b|you\b|what\s+you\b|this\b|anything\b))"
+    r"|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
+    # "send them to https://..." is usually the user being sent to a sign-up page, so only it / the <thing>
+    r"|instead\s+of\s+the\s+user|send\s+(it|the\s+[a-z ]+)\s+to\s+https?://"
     r"|(read|cat|open|include|attach|upload)\s+[^.]{0,30}(\.ssh/|id_(rsa|ed25519|ecdsa)\b)",  # asking to read keys, not mentioning them
     re.I,
 )
