@@ -41,6 +41,7 @@
     `|do${S}+not${S}+(tell|inform|mention|reveal)[^.]{0,40}user|<${S}*important${S}*>|before${S}+using${S}+any${S}+other${S}+tool` +
     `|instead${S}+of${S}+the${S}+user|send${S}+(it|them|the${S}+[a-z ]+)${S}+to${S}+https?://` +
     `|(read|cat|open|include|attach|upload)${S}+[^.]{0,30}(\\.ssh/|id_(rsa|ed25519|ecdsa)${NOT_W})`, "i");
+  const INJECTION_ALL = new RegExp(INJECTION.source, INJECTION.flags + "g");
   // see ambiguous_injection in mcpwatch/scan.py: reported at medium, never dropped
   const SOFT_AFTER_USER = rx(`^s?${S}+(that${S}+)?(a|an|the|our)${S}`, "i");
   const SIGNUP_URL = rx(`^[^/${WS})?#]+/(sign-?up|register|sign-?in|login)/?(?=[${WS}).,;]|$)`, "i");
@@ -540,12 +541,11 @@
       const text = pyStr(get(t, "description", "")) + " " + pyDumps(get(t, "inputSchema", new Map()));
       const add = (rule, severity, msg) => f.push({ server, rule, severity, message: `tool '${name}': ${msg}` });
       if (HIDDEN.test(text + name)) add("MW103", "critical", "contains invisible/tag Unicode characters, a common way to hide instructions from humans.");
-      const m = INJECTION.exec(fold(text));
-      if (m) {
-        const hit = cps(text.substr(m.index, m[0].length)).slice(0, 60).join("");
-        if (ambiguousInjection(fold(text), m)) add("MW101", "medium", `description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('${hit}'). Read it before trusting the server.`);
-        else add("MW101", "critical", `description contains instruction-like text aimed at the model ('${hit}'). Possible tool poisoning.`);
-      }
+      const folded = fold(text), hits = [...folded.matchAll(INJECTION_ALL)];
+      const clear = hits.find((h) => !ambiguousInjection(folded, h)); // one clear hit outranks any decoys
+      const show = (m) => cps(text.substr(m.index, m[0].length)).slice(0, 60).join("");
+      if (clear) add("MW101", "critical", `description contains instruction-like text aimed at the model ('${show(clear)}'). Possible tool poisoning.`);
+      else if (hits.length) add("MW101", "medium", `description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('${show(hits[0])}'). Read it before trusting the server.`);
       const toks = nameTokens(name);
       if ([...toks].some((x) => DANGEROUS_TOKENS.has(x)) || (toks.has("run") && toks.has("command"))) risky.push(name);
     }

@@ -222,11 +222,12 @@ def scan_tools(tools, server="(tools manifest)"):
         add = lambda rule, sev, msg: f.append({"server": server, "rule": rule, "severity": sev, "message": f"tool '{name}': {msg}"})
         if hidden_chars(text + name):
             add("MW103", "critical", "contains invisible/tag Unicode characters, a common way to hide instructions from humans.")
-        m = INJECTION.search(text)
-        if m and ambiguous_injection(text, m):
-            add("MW101", "medium", f"description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('{m.group(0)[:60]}'). Read it before trusting the server.")
-        elif m:
+        hits = list(INJECTION.finditer(text))
+        m = next((h for h in hits if not ambiguous_injection(text, h)), None)  # one clear hit outranks any decoys
+        if m:
             add("MW101", "critical", f"description contains instruction-like text aimed at the model ('{m.group(0)[:60]}'). Possible tool poisoning.")
+        elif hits:
+            add("MW101", "medium", f"description contains instruction-like text that reads as a quoted example, an accuracy note or a sign-up link ('{hits[0].group(0)[:60]}'). Read it before trusting the server.")
         toks = name_tokens(name)
         if toks & DANGEROUS_TOKENS or {"run", "command"} <= toks:
             risky.append(name)
