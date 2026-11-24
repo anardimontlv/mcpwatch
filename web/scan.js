@@ -40,7 +40,7 @@
     `(?<![("'\u201c\u2018])(ignore|disregard|forget)${S}+(all${S}+|any${S}+)?(the${S}+)?(previous|prior|above|earlier)${S}+(instructions|prompts|rules)` +
     `|do${S}+not${S}+(tell|inform|mention|reveal)[^.]{0,40}users?(?!${S}+(that${S}+)?(a|an|the|our)${S})` +
     `|<${S}*important${S}*>|before${S}+using${S}+any${S}+other${S}+tool` +
-    `|instead${S}+of${S}+the${S}+user|send${S}+(it|them|the${S}+[a-z ]+)${S}+to${S}+https?://(?![^${WS})]*(sign-?up|register|sign-?in|login))` +
+    `|instead${S}+of${S}+the${S}+user|send${S}+(it|the${S}+[a-z ]+)${S}+to${S}+https?://|send${S}+them${S}+to${S}+https?://(?![^${WS})]*(sign-?up|register|sign-?in|login))` +
     `|(read|cat|open|include|attach|upload)${S}+[^.]{0,30}(\\.ssh/|id_(rsa|ed25519|ecdsa)${NOT_W})`, "i");
   const DANGEROUS_TOKENS = new Set(["exec", "execute", "shell", "bash", "sh", "zsh", "powershell", "sudo", "eval", "delete", "remove", "rm", "drop", "kill"]);
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);

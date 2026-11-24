@@ -38,8 +38,8 @@ INJECTION = re.compile(
     # not an accuracy rule that goes on to name a claim ("do not tell the user the IBAN is wrong", "...a user that OUR is safe")
     r"|do\s+not\s+(tell|inform|mention|reveal)[^.]{0,40}users?(?!\s+(that\s+)?(a|an|the|our)\s)"
     r"|<\s*important\s*>|before\s+using\s+any\s+other\s+tool"
-    # shortcut: a sign-up/login URL is the user being sent to register, not data being sent; drop the exception if abused
-    r"|instead\s+of\s+the\s+user|send\s+(it|them|the\s+[a-z ]+)\s+to\s+https?://(?![^\s)]*(sign-?up|register|sign-?in|login))"
+    # shortcut: "send them to <sign-up/login URL>" is the user being sent to register; only "them" gets that exception, never it / the <data>
+    r"|instead\s+of\s+the\s+user|send\s+(it|the\s+[a-z ]+)\s+to\s+https?://|send\s+them\s+to\s+https?://(?![^\s)]*(sign-?up|register|sign-?in|login))"
     r"|(read|cat|open|include|attach|upload)\s+[^.]{0,30}(\.ssh/|id_(rsa|ed25519|ecdsa)\b)",  # asking to read keys, not mentioning them
     re.I,
 )
