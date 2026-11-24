@@ -347,9 +347,12 @@ GH = "https://github.com/anardimontlv/mcpwatch"
 HOW = GH + "/blob/main/docs/how-it-works.md"
 
 
-def page(title, body, desc, noindex=False):
+def page(title, body, desc, noindex=False, path=None, ld=None):
+    # canonical: the site is also served on *.vercel.app, so every indexable page names its www URL
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             + ('<meta name="robots" content="noindex">' if noindex else '') +
+            (f'<link rel="canonical" href="{BASE}{path}"><meta property="og:url" content="{BASE}{path}">' if path and not noindex else '')
+            + ('<script type="application/ld+json">' + json.dumps(ld).replace("</", "<\\/") + '</script>' if ld else '') +
             f'<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="icon" href="{FAVICON}">'
             f'<meta property="og:type" content="website"><meta property="og:site_name" content="mcpwatch"><meta property="og:title" content="{esc(title)}">'
             f'<meta property="og:description" content="{esc(desc)}"><meta property="og:image" content="{BASE}/og.png"><meta property="og:image:width" content="1200">'
@@ -595,7 +598,7 @@ def write_site(results, out, changes=None):
         with open(os.path.join(web, f"{name}.html"), encoding="utf-8") as fh:
             body = fh.read().replace("{{LEGAL_ENTITY}}", entity)
         with open(f"{out}/{name}.html", "w", encoding="utf-8") as fh:
-            fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}."))
+            fh.write(page(f"{title}: mcpwatch", body, f"mcpwatch {title.lower()}.", path=f"/{name}"))
     with open(f"{out}/404.html", "w", encoding="utf-8") as fh:  # Vercel serves this for any unknown path
         fh.write(page("Page not found: mcpwatch",
                       "<div class='hero'><h1>Page not found</h1><p class='lede'>That address doesn't exist on mcpwatch. "
@@ -611,7 +614,7 @@ def write_site(results, out, changes=None):
                       "When a tool's description or input schema changes after you trusted it, it shows up here. Last 14 days.</p></div>"
                       "<div id='c'><p class='mut'>Loading…</p></div>"
                       "<script>const EX=" + json.dumps(EXPLAIN).replace("</", "<\\/") + ";" + CHANGES_JS + "</script>",
-                      "Daily feed of MCP tool changes across every server in the official registry."))
+                      "Daily feed of MCP tool changes across every server in the official registry.", path="/changes"))
 
     # static, crawlable pages only where there is something to say (grade below A); /s/<slug> covers the rest
     for sl, r in notable:
@@ -632,7 +635,8 @@ def write_site(results, out, changes=None):
                 f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE).replace('HOWURL', HOW)}</script>")
         with open(f"{out}/s/{sl}.html", "w", encoding="utf-8") as fh:
             fh.write(page(f"{r['title']} MCP server: security check (grade {r['grade']})", body,
-                          f"Automated, read-only security check of the {r['title']} MCP server: grade, findings, auth, tools. Updated daily."))
+                          f"Automated, read-only security check of the {r['title']} MCP server: grade, findings, auth, tools. Updated daily.",
+                          path=f"/s/{sl}"))
     with open(f"{out}/s.html", "w", encoding="utf-8") as fh:  # client-rendered fallback for every other server
         fh.write(page("MCP server security grade: mcpwatch", "<p class='crumb'><a href='/#lookup'>← Search all servers</a></p><div id='m'><p class='mut'>Loading…</p></div>"
                       f"<script>{SERVER_JS.replace('BASE', BASE).replace('DISPUTE', DISPUTE).replace('HOWURL', HOW)}</script>", "mcpwatch security grade for an MCP server.", noindex=True))
@@ -678,7 +682,12 @@ def write_site(results, out, changes=None):
             f"changed tool descriptions, added or removed tools, auth and grade changes.</p><p><a class='btn' href='/changes'>Open the radar →</a></p>"
             f"<script>{SEARCH_JS}</script>")
     with open(f"{out}/index.html", "w", encoding="utf-8") as fh:
-        fh.write(page("MCP Server Security Index: mcpwatch", body, "Daily security grades for every MCP server in the official registry."))
+        fh.write(page("MCP Server Security Index: mcpwatch", body, "Daily security grades for every MCP server in the official registry.", path="/", ld={
+            "@context": "https://schema.org", "@type": "SoftwareApplication", "name": "mcpwatch", "url": BASE + "/",
+            "description": "Security index, rug-pull radar, lockfile, CI check and runtime guard for MCP servers.",
+            "applicationCategory": "SecurityApplication", "operatingSystem": "macOS, Linux, Windows",
+            "downloadUrl": "https://pypi.org/project/mcpwatch-io/", "license": "https://www.apache.org/licenses/LICENSE-2.0",
+            "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "sameAs": [GH]}))
     with open(f"{out}/stats.json", "w", encoding="utf-8") as fh:
         json.dump({"generated": now, "servers": len(results), "grades": counts, "open": open_n,
                    "rules": {k: sum(x["rule"] == k for r in results for x in r["findings"]) for k in
