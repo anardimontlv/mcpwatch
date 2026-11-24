@@ -10,6 +10,7 @@ const manage = require(path.join(__dirname, "..", "api", "manage"));
 const report = require(path.join(__dirname, "..", "api", "report"));
 const lookup = require(path.join(__dirname, "..", "api", "v1", "lookup"));
 const claim = require(path.join(__dirname, "..", "api", "claim"));
+const cronScan = require(path.join(__dirname, "..", "api", "cron", "scan"));
 const unsubscribe = require(path.join(__dirname, "..", "api", "unsubscribe"));
 const checkout = require(path.join(__dirname, "..", "api", "billing", "checkout"));
 const portal = require(path.join(__dirname, "..", "api", "billing", "portal"));
@@ -669,6 +670,30 @@ test("maintainer claim: proven by the repo's .mcpwatch file; only fixed labels f
   assert.equal(claim.githubRepo("https://github.com/a/../"), null);
   assert.equal(claim.githubRepo("https://github.com.evil.com/a/b"), null);
   assert.equal(claim.githubRepo("https://github.com/acme/srv/tree/main/pkg"), "acme/srv");
+});
+
+test("cron scan: only Vercel Cron's secret; dispatches only when no run exists today", async () => {
+  const calls = [];
+  let runsToday = 0, dispatchStatus = 204;
+  L.deps.ghFetch = async (p, init = {}) => { calls.push([init.method || "GET", p]);
+    return p.startsWith("/runs") ? { ok: true, status: 200, json: async () => ({ total_count: runsToday }) } : { ok: dispatchStatus < 300, status: dispatchStatus }; };
+  const hit = (auth) => get(cronScan, "/api/cron/scan", auth ? { authorization: auth } : {});
+  delete process.env.CRON_SECRET;
+  assert.equal((await hit("Bearer x")).status, 401, "no secret configured: refuse everything");
+  process.env.CRON_SECRET = "s3cret-value"; process.env.GH_DISPATCH_TOKEN = "t";
+  assert.equal((await hit()).status, 401);
+  assert.equal((await hit("Bearer wrong")).status, 401);
+  assert.equal(calls.length, 0, "GitHub never called without the secret");
+  runsToday = 1;
+  const skip = await hit("Bearer s3cret-value");
+  assert.equal(skip.json.dispatched, false);
+  assert.ok(!calls.some(([m]) => m === "POST"), "no dispatch when a run exists today");
+  runsToday = 0;
+  assert.equal((await hit("Bearer s3cret-value")).json.dispatched, true);
+  assert.deepEqual(calls.at(-1), ["POST", "/dispatches"]);
+  dispatchStatus = 403;
+  assert.equal((await hit("Bearer s3cret-value")).status, 502);
+  delete process.env.CRON_SECRET; delete process.env.GH_DISPATCH_TOKEN;
 });
 
 // ---------------------------------------------------------------- billing (BILLING_ENABLED) --------------------------
