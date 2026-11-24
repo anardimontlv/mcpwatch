@@ -2,6 +2,8 @@
 
 <!-- mcp-name: io.github.anardimontlv/mcpwatch -->
 
+[![mcpwatch on Glama](https://glama.ai/mcp/servers/anardimontlv/mcpwatch/badges/score.svg)](https://glama.ai/mcp/servers/anardimontlv/mcpwatch)
+
 **Know when the tools your AI agents trust change.**
 
 MCP servers can quietly rewrite a tool's description after you approved it (a "rug pull"), and that description is
