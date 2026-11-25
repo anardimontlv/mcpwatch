@@ -281,7 +281,7 @@ h2{font-size:1.375rem;margin-top:2.4em}h3{font-size:1rem;margin:0 0 .25em}p{marg
 .mut{color:var(--mut)}.sm{font-size:.875rem}.wrap{overflow-wrap:anywhere}.min0{min-width:0}.crumb{font-size:.875rem;margin-bottom:20px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin:16px 0}.card h2{font-size:1.0625rem;margin-top:0}
-.hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}
+.hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}ul.lede{padding-left:1.2em;margin-top:-4px}ul.lede li{margin:4px 0}ul.lede b{color:var(--fg)}
 .eye{display:inline-block;font:500 .8125rem/1 var(--mono);color:var(--acc);background:var(--soft);padding:6px 10px;border-radius:99px;margin-bottom:16px}
 [hidden]{display:none!important}.feat{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.feat li{margin:0;border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--sf)}.feat h3 a{color:var(--fg);text-decoration:none}.feat h3 a:hover{color:var(--acc)}.feat p{margin:0}#lookup{scroll-margin-top:24px}a.stat{color:inherit;text-decoration:none;transition:border-color .15s}a.stat:hover{border-color:var(--acc)}a.stat:hover span{color:var(--acc)}a.gl{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:2px 4px}a.gl:hover{background:var(--sf)}
 .cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 20px}
@@ -653,15 +653,16 @@ def write_site(results, out, changes=None):
              ("Check", "Fail CI when any pinned tool changes: exit 1 on drift. Add --live to see the exact sentence that changed.", "mcpwatch check .mcp.json"),
              ("Guard", "Block changed tools at runtime: your agent only sees the tools you approved.", "mcpwatch guard --name gh -- <server cmd>")]
     body = (f"<section class='hero'><span class='eye'>Rug-pull radar for MCP</span><h1>Know when the tools your AI agents trust change.</h1>"
-            f"<p class='lede'>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch checks every server in the "
-            f"official MCP registry daily, fingerprints the tools of every remote server it can reach, grades them for leaked secrets, "
-            f"plain-HTTP endpoints, unauthenticated access and poisoned descriptions, fails your CI when a tool you pinned changes, and can block changed tools before your agent ever reads them.</p>"
+            f"<p class='lede'>MCP servers can rewrite a tool's instructions after you approve it: a rug pull. mcpwatch:</p>"
+            f"<ul class='lede'><li><b>Spots changes</b>: fingerprints every server in the official MCP registry daily.</li>"
+            f"<li><b>Grades risk</b>: leaked secrets, plain HTTP, no login, poisoned descriptions.</li>"
+            f"<li><b>Blocks in CI</b>: fails the build when a tool you pinned changes.</li></ul>"
             f"<div class='cta'><a class='btn pri' href='/scan'>Scan your config</a><a class='btn' href='/changes'>See today's radar →</a></div>"
             f"<ul class='trust'><li>Read-only checks</li><li>Never runs third-party code</li><li>Nothing leaves your machine</li>"
             f"<li>No cookies or trackers</li></ul></section>"
             f"<section aria-label='Index statistics'><div class='stats'>"
             f"<a class='stat' href='/#lookup'><b>{len(results):,}</b><span>servers graded daily →</span></a>"
-            f"<a class='stat' href='/probe'><b>{open_n:,}</b><span>list tools to anyone, no auth →</span></a>"
+            f"<a class='stat' href='/probe'><b>{open_n:,}</b><span>servers exposing tools without login →</span></a>"
             f"<a class='stat' href='/changes'><b>{radar}</b><span>{radar_lbl} →</span></a>"
             f"<div class='stat'><b>{now}</b><span>last run (UTC)</span></div></div>"
             f"<div class='dist' aria-hidden='true'>{dist}</div><ul class='legend'>"
