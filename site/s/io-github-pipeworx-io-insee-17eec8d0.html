@@ -1,0 +1,161 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="canonical" href="https://www.mcpwatch.io/s/io-github-pipeworx-io-insee-17eec8d0"><meta property="og:url" content="https://www.mcpwatch.io/s/io-github-pipeworx-io-insee-17eec8d0"><title>Insee MCP server: security check (grade B)</title><meta name="description" content="Automated, read-only security check of the Insee MCP server: grade, findings, auth, tools. Updated daily."><link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226%22%20fill%3D%22%230f766e%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%3E%3Cpath%20class%3D%22k%22%20stroke%3D%22%23fff%22%20d%3D%22M12%205.5a6.5%206.5%200%201%200%206.5%206.5%22%2F%3E%3Cpath%20class%3D%22k%22%20stroke%3D%22%23fff%22%20d%3D%22M12%2012l4.6-4.6%22%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221.8%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E"><meta property="og:type" content="website"><meta property="og:site_name" content="mcpwatch"><meta property="og:title" content="Insee MCP server: security check (grade B)"><meta property="og:description" content="Automated, read-only security check of the Insee MCP server: grade, findings, auth, tools. Updated daily."><meta property="og:image" content="https://www.mcpwatch.io/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><style>:root{color-scheme:light dark;--bg:#fff;--sf:#f6f8f9;--fg:#0e1417;--mut:#55616b;--line:#e1e6ea;--acc:#0f766e;--on:#fff;--soft:#e6f4f2;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f12;--sf:#12191d;--fg:#e6edf0;--mut:#9aa7b0;--line:#243038;--acc:#2dd4bf;--on:#042f2b;--soft:#0f2a28}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--acc);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+.in,main{max-width:1040px;margin:0 auto;padding:0 16px}main{padding-top:40px;padding-bottom:24px}
+.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:8px;z-index:9;background:var(--bg);padding:8px 12px}
+.top{border-bottom:1px solid var(--line)}.top .in{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 24px;min-height:60px}
+.brand{display:inline-flex;align-items:center;gap:10px;color:var(--fg);font-weight:650;font-size:1.0625rem;letter-spacing:-.01em;text-decoration:none}
+.logo rect{fill:var(--acc)}.logo .k{stroke:var(--on)}.logo circle{fill:var(--on)}
+nav{display:flex;flex-wrap:wrap;gap:0 20px;font-size:.9375rem}nav a{color:var(--mut);text-decoration:none;padding:8px 0}nav a:hover{color:var(--fg)}
+footer{border-top:1px solid var(--line);margin-top:64px;font-size:.875rem;color:var(--mut)}footer .in{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:0 24px;padding:16px}footer p{margin:8px 0}footer nav{gap:0 16px;font-size:inherit}
+h1,h2,h3{line-height:1.2;letter-spacing:-.02em;margin:0 0 .5em}h1{font-size:clamp(1.875rem,4.6vw,2.75rem)}
+h2{font-size:1.375rem;margin-top:2.4em}h3{font-size:1rem;margin:0 0 .25em}p{margin:0 0 1em}ul{padding-left:1.2em}li{margin:.3em 0}
+.mut{color:var(--mut)}.sm{font-size:.875rem}.wrap{overflow-wrap:anywhere}.min0{min-width:0}.crumb{font-size:.875rem;margin-bottom:20px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin:16px 0}.card h2{font-size:1.0625rem;margin-top:0}
+.hero{max-width:780px;padding-bottom:8px}.lede{font-size:1.125rem;color:var(--mut)}ul.lede{padding-left:1.2em;margin-top:-4px}ul.lede li{margin:4px 0}ul.lede b{color:var(--fg)}
+.eye{display:inline-block;font:500 .8125rem/1 var(--mono);color:var(--acc);background:var(--soft);padding:6px 10px;border-radius:99px;margin-bottom:16px}
+[hidden]{display:none!important}.feat{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.feat li{margin:0;border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--sf)}.feat h3 a{color:var(--fg);text-decoration:none}.feat h3 a:hover{color:var(--acc)}.feat p{margin:0}#lookup{scroll-margin-top:24px}a.stat{color:inherit;text-decoration:none;transition:border-color .15s}a.stat:hover{border-color:var(--acc)}a.stat:hover span{color:var(--acc)}a.gl{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:2px 4px}a.gl:hover{background:var(--sf)}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 20px}
+.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-weight:600;text-decoration:none;transition:border-color .15s,box-shadow .15s}
+.btn:hover{border-color:var(--mut)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on)}
+button.btn{font:inherit;font-weight:600;cursor:pointer}
+textarea{width:100%;min-height:220px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+textarea:focus{outline:2px solid var(--acc);outline-offset:1px}.btn.pri:hover{box-shadow:inset 0 0 0 99px rgb(0 0 0/.14)}
+.trust{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 20px;font-size:.875rem;color:var(--mut)}.trust li::before{content:"\2713\00a0";color:var(--acc);font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:40px 0 12px}
+.stat{border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}.stat b{display:block;font-size:clamp(1.25rem,5vw,1.625rem);letter-spacing:-.02em;font-variant-numeric:tabular-nums}.stat span{font-size:.8125rem;color:var(--mut)}
+.dist{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--line);margin:20px 0 10px}
+.legend{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 18px;font-size:.875rem;font-variant-numeric:tabular-nums}
+.steps{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;counter-reset:s}
+.steps li{margin:0;border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--sf);min-width:0}
+.steps h3::before{counter-increment:s;content:counter(s);display:inline-grid;place-items:center;width:22px;height:22px;margin-right:8px;border-radius:50%;background:var(--acc);color:var(--on);font-size:.75rem}
+code,pre{font-family:var(--mono);font-size:.875em}pre{margin:0;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8125rem;line-height:1.6}
+.card pre,.steps pre{margin-top:8px}
+input[type=search]{width:100%;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--fg);font:inherit}input[type=search]:focus-visible{outline-offset:0;border-color:var(--acc)}
+table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;font-size:.9375rem;background:var(--bg);margin:12px 0}
+td,th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);background:var(--sf)}.n{text-align:right;font-variant-numeric:tabular-nums}
+.g{display:inline-grid;place-items:center;min-width:1.75rem;height:1.5rem;padding:0 6px;border-radius:6px;color:#fff;font-weight:700;font-size:.875rem;line-height:1}
+.g.lg{min-width:3.25rem;height:3.25rem;font-size:1.75rem;border-radius:12px;flex:none}
+.gA{background:#1a7f37}.gB{background:#4d7c0f}.gC{background:#8a5a00}.gD{background:#bc4c00}.gF{background:#c4222e}
+.sh{display:flex;gap:16px;align-items:center;margin-bottom:16px}.sh h1{margin:0}.sh p{margin:4px 0 0}
+.sev{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:4px;font-size:.8125rem;font-weight:600;white-space:nowrap}
+.feed{list-style:none;padding:0}.feed li{padding:12px 0;border-top:1px solid var(--line)}.chg{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tag{font:.8125rem/1.5 var(--mono);padding:2px 8px;border-radius:6px;background:var(--sf);border:1px solid var(--line);overflow-wrap:anywhere;min-width:0}
+.tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:32px 0}
+.tier{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);padding:24px}.tier h2{margin:0;font-size:1.0625rem}.tier ul{flex:1;margin:16px 0}
+.price{font-size:2.25rem;font-weight:700;letter-spacing:-.03em;margin:8px 0 0}.price small{font-size:.875rem;font-weight:400;color:var(--mut);letter-spacing:0}
+.soon{margin:0;padding:10px;border:1px dashed var(--line);border-radius:8px;text-align:center;color:var(--mut);font-size:.875rem}
+.prose{max-width:720px}.prose h2{font-size:1.125rem;margin-top:2em}
+.rlist li.rrow{padding:14px 0}.rhd{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}.rname{font-weight:600;margin-right:4px}.rsum{margin:4px 0 0}
+.badge{display:inline-flex;align-items:center;padding:1px 9px;border-radius:99px;font-size:.75rem;font-weight:600;line-height:1.7;white-space:nowrap;border:1px solid transparent}
+.b-cr{background:rgb(196 34 46/.1);color:#a8151f;border-color:rgb(196 34 46/.35)}.b-hi{background:rgb(188 76 0/.1);color:#8f3a00;border-color:rgb(188 76 0/.35)}.b-md{background:rgb(138 90 0/.1);color:#6e4800;border-color:rgb(138 90 0/.35)}
+@media (prefers-color-scheme:dark){.b-cr{color:#ffa3a3}.b-hi{color:#ffb98a}.b-md{color:#ecc66e}}
+.rbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0 8px}
+.chip{font:inherit;font-size:.875rem;min-height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+.chip b{margin-left:6px;font-variant-numeric:tabular-nums}.chip[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--on)}
+.rbar input[type=search]{flex:1 1 220px;width:auto;min-height:36px;border-radius:99px;font-size:.875rem}
+.rdet summary,.legend-why summary,.routine summary{cursor:pointer;color:var(--acc);font-size:.875rem;margin-top:6px}
+.legend-why{margin:0 0 8px}.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0;font-size:.9375rem}.why p{margin:0 0 4px}
+.tl{font-size:.875rem;margin:8px 0}.tl code{font-size:.8125rem}.routine{margin-top:16px}
+.b-lo{background:var(--sf);color:var(--mut);border-color:var(--line)}.b-ok{background:rgb(26 127 55/.1);color:#116329;border-color:rgb(26 127 55/.35)}
+@media (prefers-color-scheme:dark){.b-ok{color:#7ee2a0}}
+.khd{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}.khd h2{margin:0}
+.okline{color:#1a7f37;font-weight:600;margin:8px 0 0}.desc{margin:4px 0 8px}.acts{margin:16px 0}
+.tchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px}.sm-btn{min-height:36px;font-size:.875rem}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}.mgrid h3{margin:0 0 8px}.mgrid img{display:block;margin:0 0 8px}
+.card .rlist{margin:0}.card .rlist li.rrow:first-child{border-top:0}.card h3{font-size:.9375rem;margin:16px 0 4px}
+@media (max-width:600px){.card{padding:16px}td,th{padding:8px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}</style><script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)}</script><script defer src="/_vercel/insights/script.js"></script></head><body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="in"><a class="brand" href="/"><svg class="logo" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6"/><g fill="none" stroke-width="2" stroke-linecap="round"><path class="k" d="M12 5.5a6.5 6.5 0 1 0 6.5 6.5"/><path class="k" d="M12 12l4.6-4.6"/></g><circle cx="12" cy="12" r="1.8"/></svg>mcpwatch</a><nav aria-label="Main"><a href="/scan">Scan</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="https://github.com/anardimontlv/mcpwatch#quickstart">Docs</a><a href="https://github.com/anardimontlv/mcpwatch">GitHub</a></nav></div></header><main id="main"><p class='crumb'><a href='/#lookup'>← Search all servers</a></p><div id='m'><div class='sh'><span class="g gB lg"><span class="vh">Grade </span>B</span><div class='min0'><h1 class='wrap'>Insee</h1><p class='mut sm wrap'>io.github.pipeworx-io/insee · v0.2.1 · score 89/100 · checked 2026-11-28</p></div></div><p class='wrap'>INSEE MCP — France&#x27;s SIRENE business registry (INSEE).</p><section class='card'><h2>Findings</h2><ul><li><span class='sev'>Low</span> MW005</li><li><span class='sev'>Medium</span> MW102</li></ul></section></div><script>
+const $=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const card=t=>{const k=$('section',null,'card');if(t)k.append($('h2',t));return k};
+const sl=location.pathname.split('/').filter(Boolean).pop().replace(/\.html$/,'');
+const m=document.getElementById('m');
+// our own words per rule: [title, why it matters]
+const RU={MW001:['Plaintext secret','A credential is readable in the published config, so anyone can reuse it.'],
+MW002:['Unpinned package','Every launch runs whatever version the registry serves that day, including a compromised one.'],
+MW004:['Plain HTTP endpoint','Traffic and tokens can be read or changed in transit.'],
+MW005:['Tools listed without auth','Anyone with the URL can list and call these tools. Fine for public data, risky if the tools touch accounts.'],
+MW006:['Broad filesystem access','The server can read or change files far beyond a project folder.'],
+MW007:['Host-level container access','The container can effectively control the host machine.'],
+MW008:['Inline shell launch','Hard to audit what actually runs; a download piped into a shell runs unreviewed code.'],
+MW009:['Safety control disabled','A launch flag turns off a protection the client would otherwise apply.'],
+MW101:['Instructions aimed at the model','Tool text tells the AI what to do, for example to ignore earlier rules or read files. Agents follow tool descriptions, so this can hijack them.'],
+MW102:['Can execute commands or delete data','An agent steered by a prompt or a poisoned document could misuse these tools.'],
+MW103:['Hidden characters in tool text','Characters people can’t see but models read: a known way to hide instructions.']};
+const SEV=['critical','high','medium','low'],SC={critical:'cr',high:'hi',medium:'md',low:'lo'};
+const LBL={'intended':'Maintainer: intended behavior','fixing':'Maintainer: a fix is coming','false-positive':'Maintainer: says this is a false positive'};
+const AUTH={open:['Lists tools without auth','md'],auth:['Requires auth','ok'],down:['Endpoint not reachable','lo']};
+const cap=s=>String(s).charAt(0).toUpperCase()+String(s).slice(1);
+const badge=(t,c)=>$('span',t,'badge b-'+c);
+if(!/^[a-z0-9-]{1,100}$/.test(sl)){m.replaceChildren($('p','Unknown server.'))}else{
+Promise.all([fetch('/d/'+sl.slice(-8,-6)+'.json').then(r=>r.json()),fetch('/api/claim?slug='+sl).then(r=>r.ok?r.json():{}).catch(()=>({}))]).then(([d,cl])=>{const r=d[sl];if(!r){m.replaceChildren($('p','Unknown server.'));return}
+const resp=(cl&&cl.claimed&&cl.responses)||{};
+document.title=r.t+' MCP server: security check (grade '+r.g+')';
+const out=[];
+// ---- header ----
+const gr=$('span',null,'g lg g'+r.g);gr.append($('span','Grade ','vh'),r.g);
+const tx=$('div',null,'min0');tx.append($('h1',r.t,'wrap'),$('p',r.n+' · v'+r.v+' · score '+r.s+'/100'+(r.vd?' · tools verified '+r.vd:''),'mut sm wrap'));
+const hd=$('div',null,'sh');hd.append(gr,tx);out.push(hd);
+const st=$('div',null,'rhd');const au=AUTH[r.a]||['Package-based: static checks only','lo'];st.append(badge(au[0],au[1]));
+if((r.k||[]).length)st.append(badge(r.k.length+' public tool'+(r.k.length===1?'':'s'),'lo'));
+if(cl&&cl.claimed)st.append(badge('Claimed by maintainers','ok'));
+out.push(st);
+const act=$('div',null,'cta acts');const wa=$('a','Watch this server','btn pri');wa.href='/watch?add='+sl;act.append(wa);
+if(/^https:\/\//.test(r.r)){const a=$('a','Source code','btn');a.href=r.r;a.rel='nofollow';act.append(a)}
+const dl=$('a','Dispute a finding','btn');dl.href='https://github.com/anardimontlv/mcpwatch/issues/new?labels=dispute&title=Dispute%3A+'+encodeURIComponent(r.n);dl.rel='nofollow';act.append(dl);out.push(act);
+if(r.d){const ds=$('p',null,'desc wrap');ds.append($('span','From the registry: ','mut'),String(r.d).slice(0,600));out.push(ds)}
+if(cl&&cl.claimed){out.push($('p','Claimed by the maintainers of github.com/'+cl.repo+' (verified '+String(cl.verified_at).slice(0,10)+'). Their responses use fixed labels; grades are unchanged.','mut sm wrap'))}
+// ---- findings, grouped by rule ----
+const k=card(null),kh=$('div',null,'khd');kh.append($('h2','Findings'));
+if(!r.f.length){k.append(kh,$('p','✓ No issues found by current checks.','okline'))}else{
+ const groups=new Map();r.f.forEach(f=>{const g=groups.get(f[1])||{rule:f[1],sev:f[0],items:[]};g.items.push(f[2]);if(SEV.indexOf(f[0])<SEV.indexOf(g.sev))g.sev=f[0];groups.set(f[1],g)});
+ const gs=[...groups.values()].sort((a,b)=>SEV.indexOf(a.sev)-SEV.indexOf(b.sev));
+ const cnt={};gs.forEach(g=>{cnt[g.sev]=(cnt[g.sev]||0)+1});
+ const sm=$('div',null,'rhd');SEV.filter(s=>cnt[s]).forEach(s=>sm.append(badge(cnt[s]+' '+s,SC[s])));kh.append(sm);k.append(kh);
+ const ul=$('ul',null,'feed rlist');
+ gs.forEach(g=>{const li=$('li',null,'rrow'),h=$('div',null,'rhd'),ru=RU[g.rule]||[g.rule,''];
+  h.append(badge(cap(g.sev),SC[g.sev]||'lo'),$('strong',ru[0]),$('span',g.rule,'mut sm'));
+  if(g.items.length>1)h.append($('span',g.items.length+' tools','mut sm'));
+  if(LBL[resp[g.rule]])h.append(badge(LBL[resp[g.rule]],'ok'));
+  li.append(h);if(ru[1])li.append($('p',ru[1],'rsum mut sm'));
+  const names=g.items.map(x=>{const mm=/^tool '([^']{1,120})'/.exec(x);return mm?mm[1]:null});
+  if(names.every(Boolean)&&g.items.length>1){const p=$('p',null,'tl');p.append($('strong','Tools: '),$('code',names.join(', '),'wrap'));const dd=$('details',null,'rdet');dd.append($('summary','Show affected tools'),p);li.append(dd)}
+  else{const dd=$('details',null,'rdet');dd.append($('summary','Details'));g.items.forEach(x=>dd.append($('p',x,'tl wrap')));li.append(dd)}
+  ul.append(li)});
+ k.append(ul)}
+out.push(k);
+// ---- what was checked ----
+const c=card('What was checked'),eu=$('ul',null,'feed rlist');
+const NS=[[/: answers without auth$/,'Answers without auth','md'],[/: requires auth$/,'Requires auth','ok'],[/: not reachable$/,'Not reachable','lo'],[/: not probed \(owner opt-out\)$/,'Not probed (owner opt-out)','lo']];
+(r.o||[]).forEach(o=>{const li=$('li',null,'rrow'),h=$('div',null,'rhd'),hit=NS.find(n=>n[0].test(o));
+ if(hit){h.append($('code',o.replace(hit[0],''),'wrap'),badge(hit[1],hit[2]))}else h.append($('span',o,'wrap'));li.append(h);eu.append(li)});
+if(!(r.o||[]).length)eu.append($('li','No remote endpoint: this server runs locally from a package, so only its published config was checked.','rrow mut'));
+c.append(eu);
+const tl=r.k||[];
+if(tl.length){const box=$('div',null,'tchips');tl.forEach((t,i)=>{const s=$('code',t,'tag');if(i>=24)s.hidden=true;box.append(s)});
+ c.append($('h3','Public tools ('+tl.length+')'),box);
+ if(tl.length>24){const b=$('button','Show all '+tl.length+' tools','btn sm-btn');b.type='button';b.addEventListener('click',()=>{box.querySelectorAll('[hidden]').forEach(x=>x.hidden=false);b.remove()});c.append(b)}}
+else c.append($('p','Tools: not listed publicly.','mut sm'));
+out.push(c);
+// ---- maintainer ----
+const b=card('For maintainers'),bg=$('div',null,'mgrid'),b1=$('div'),b2=$('div');
+const im=$('img');im.src='/badge/'+sl+'.svg';im.alt='mcpwatch grade badge';im.height=20;
+b1.append($('h3','Add the badge'),im,$('pre','[![mcpwatch](https://www.mcpwatch.io/badge/'+sl+'.svg)](https://www.mcpwatch.io/s/'+sl+')'));
+b2.append($('h3','Respond to findings'));
+if(/^https:\/\/github\.com\//.test(r.r)){
+ const ex='claim: '+sl+'\n'+(r.f.length?[...new Set(r.f.map(f=>f[1]))].map(x=>'# '+x+': intended | fixing | false-positive').join('\n'):'');
+ const vb=$('button','Verify my claim','btn'),vm=$('p',null,'sm wrap');vb.type='button';
+ vb.addEventListener('click',async()=>{vb.disabled=true;try{const q=await fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:sl})});const j=await q.json();
+  vm.textContent=q.ok?'Verified. Reload the page to see your responses.':'Not verified: '+(j.error||'unknown error')+'.'}catch(e){vm.textContent='Network error, try again.'}vb.disabled=false});
+ b2.append($('p','Commit a file named .mcpwatch to the default branch of the repository the MCP registry lists, then verify. Responses use fixed labels; grades don’t change.','sm mut'),$('pre',ex),vb,vm)}
+else{const p=$('p','This server’s registry entry lists no GitHub repository. ','sm mut');const a=$('a','Open a dispute');a.href=dl.href;a.rel='nofollow';p.append(a,' instead.');b2.append(p)}
+bg.append(b1,b2);b.append(bg);
+const hw=$('a','How grading works');hw.href='https://github.com/anardimontlv/mcpwatch/blob/main/docs/how-it-works.md';const nt=$('p','Automated, read-only signal from public data, not an audit or an accusation. ','mut sm');nt.append(hw,'.');
+out.push(b,nt);
+m.replaceChildren(...out)})
+.catch(()=>m.replaceChildren($('p','Could not load data.')))}
+</script></main><footer><div class="in"><p>Automated, read-only checks. A grade is not a guarantee of safety. Servers listed here are third-party projects from the public MCP registry; mcpwatch does not sell, operate or endorse them. mcpwatch sells one product: developer security monitoring (<a href="/pricing">pricing</a>).</p><nav aria-label="Footer"><a href="/">Index</a><a href="/changes">Radar</a><a href="/pricing">Pricing</a><a href="https://github.com/anardimontlv/mcpwatch">GitHub</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/refunds">Refunds</a></nav></div></footer></body></html>
